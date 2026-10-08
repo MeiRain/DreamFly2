@@ -1,0 +1,46 @@
+# macOS
+.DS_Store
+
+# KiCad local data and backups
+.history/
+*-backups/
+*.lck
+~*.lck
+
+# STM32CubeIDE / Eclipse
+.settings/
+.project
+.cproject
+
+# CLion / CMake
+.idea/
+cmake-build-*/
+build/
+out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# Embedded build products
+*.o
+*.obj
+*.a
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+*.d
+
+# Editor files
+*.swp
+*.swo
+*~
+
+# draw.io
+*.drawio.bkp
+.$*
+
+# Reference files
+reference/
