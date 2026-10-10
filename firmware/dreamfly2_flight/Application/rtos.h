@@ -11,4 +11,16 @@
 /** @brief Run low-rate system monitoring and status indication. */
 void flight_system_task_entry(void *argument);
 
+/** @brief Run the high-rate flight-control loop. */
+void flight_control_task_entry(void *argument);
+
+/** @brief Read and process low-rate navigation sensors. */
+void flight_sensor_task_entry(void *argument);
+
+/** @brief Send low-priority flight debug data. */
+void flight_debug_task_entry(void *argument);
+
+/** @brief Process the remote-control and telemetry link. */
+void flight_link_task_entry(void *argument);
+
 #endif /* DREAMFLY2_APPLICATION_RTOS_H */

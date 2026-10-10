@@ -1,52 +1,255 @@
+/**
+ * @file ws2812b.c
+ * @brief WS2812B RGB LED driver using TIM2 PWM and DMA.
+ * @author 梅雨
+ * @date 2026-10-09
+ */
+
 #include "ws2812b.h"
 
-/************************代码移植修改区************************************/
+#include "tim.h"
 
-#define WS2812B_CLK RCC_AHB1Periph_GPIOB // 端口时钟
-#define WS2812B_PORT GPIOB				 // 端口
-#define WS2812B_PIN GPIO_Pin_10			 // 引脚
+#define WS2812B_TIMER_CHANNEL TIM_CHANNEL_3
+#define WS2812B_BITS_PER_LED 24U
+#define WS2812B_RESET_SLOTS 200U
+#define WS2812B_BUFFER_SIZE \
+    (WS2812B_LED_COUNT * WS2812B_BITS_PER_LED + WS2812B_RESET_SLOTS)
 
-/**************************************************************************/
+/* TIM2 clock: 100 MHz, period: 125 counts. */
+#define WS2812B_DUTY_0 30U
+#define WS2812B_DUTY_1 90U
 
-#define WS2812B_AMOUNT 4
-#define WS2812B_SET1 WS2812B_PORT->BSRRL |= WS2812B_PIN
-#define WS2812B_SET0 WS2812B_PORT->BSRRH |= WS2812B_PIN
+#define WS2812B_RUN_COLOR_COUNT 7U
+#define WS2812B_GRADIENT_RANGE 768U
+#define WS2812B_GRADIENT_STEP 5U
+#define WS2812B_GRADIENT_BRIGHTNESS 64U
 
-// 跑马灯WS2812B三元色配出七彩跑马灯
-static uint32_t Run_buf[][16] =
+typedef struct
 {
-	{0xFFA500,0,0,0,0xFFA500,0,0,0,0xFFA500,0,0,0,0xFFA500,0,0,0,},//橙色
-	{0x00FF00,0,0,0,0x00FF00,0,0,0,0x00FF00,0,0,0,0x00FF00,0,0,0,},//绿色
-	{0xFF00FF,0,0,0,0xFF00FF,0,0,0,0xFF00FF,0,0,0,0xFF00FF,0,0,0,},//紫色
-	{0x00FFFF,0,0,0,0x00FFFF,0,0,0,0x00FFFF,0,0,0,0x00FFFF,0,0,0,},//青色
-	{0x0000FF,0,0,0,0x0000FF,0,0,0,0x0000FF,0,0,0,0x0000FF,0,0,0,},//蓝色
-	{0xFFFF00,0,0,0,0xFFFF00,0,0,0,0xFFFF00,0,0,0,0xFFFF00,0,0,0,},//黄色
-	{0xFFFFFF,0,0,0,0xFFFFFF,0,0,0,0xFFFFFF,0,0,0,0xFFFFFF,0,0,0,},//白色
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+} ws2812b_pixel_t;
+
+static const ws2812b_pixel_t s_run_colors[WS2812B_RUN_COLOR_COUNT] =
+{
+    {255U, 165U, 0U},
+    {0U, 255U, 0U},
+    {255U, 0U, 255U},
+    {0U, 255U, 255U},
+    {0U, 0U, 255U},
+    {255U, 255U, 0U},
+    {255U, 255U, 255U}
 };
 
-uint8_t Run_flag = 1; // 跑马灯标志
+static ws2812b_pixel_t s_pixels[WS2812B_LED_COUNT];
+static uint32_t s_pwm_buffer[WS2812B_BUFFER_SIZE];
+static volatile uint8_t s_transmitting;
 
-/*********************************************************************
- *函  数：void LED_Init(void)
- *功  能：初始化LED控制引脚
- *参  数：无
- *返回值: 无
- *备  注: 无
- *********************************************************************/
-void WS2812B_Init(void)
+static ws2812b_pixel_t ws2812b_gradient_color(uint16_t hue)
 {
-	GPIO_InitTypeDef GPIO_InitStructure;
+    ws2812b_pixel_t color = {0U, 0U, 0U};
+    uint8_t position;
 
-	RCC_AHB1PeriphClockCmd(WS2812B_CLK, ENABLE);
+    hue %= WS2812B_GRADIENT_RANGE;
 
-	GPIO_InitStructure.GPIO_Pin = WS2812B_PIN;
-	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_OUT;  // 选择模式
-	GPIO_InitStructure.GPIO_OType = GPIO_OType_PP; // 输出类型
-	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_100MHz;
-	GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP;
-	GPIO_Init(WS2812B_PORT, &GPIO_InitStructure);
-	
-	GPIO_ResetBits(WS2812B_PORT, WS2812B_PIN);
+    if (hue < 256U)
+    {
+        position = (uint8_t)hue;
+        color.red = (uint8_t)(255U - position);
+        color.green = position;
+    }
+    else if (hue < 512U)
+    {
+        position = (uint8_t)(hue - 256U);
+        color.green = (uint8_t)(255U - position);
+        color.blue = position;
+    }
+    else
+    {
+        position = (uint8_t)(hue - 512U);
+        color.blue = (uint8_t)(255U - position);
+        color.red = position;
+    }
+
+    color.red = (uint8_t)(((uint16_t)color.red * WS2812B_GRADIENT_BRIGHTNESS) / 255U);
+    color.green = (uint8_t)(((uint16_t)color.green * WS2812B_GRADIENT_BRIGHTNESS) / 255U);
+    color.blue = (uint8_t)(((uint16_t)color.blue * WS2812B_GRADIENT_BRIGHTNESS) / 255U);
+
+    return color;
 }
 
+static void ws2812b_encode_byte(uint8_t data, uint32_t *buffer, uint16_t *index)
+{
+    uint8_t mask;
 
+    for (mask = 0x80U; mask != 0U; mask >>= 1U)
+    {
+        buffer[*index] = ((data & mask) != 0U) ? WS2812B_DUTY_1 : WS2812B_DUTY_0;
+        (*index)++;
+    }
+}
+
+void ws2812b_init(void)
+{
+    s_transmitting = 0U;
+    ws2812b_set_all(0U, 0U, 0U);
+    __HAL_TIM_SET_COMPARE(&htim2, WS2812B_TIMER_CHANNEL, 0U);
+}
+
+void ws2812b_set_pixel(uint8_t index, uint8_t red, uint8_t green, uint8_t blue)
+{
+    if (index >= WS2812B_LED_COUNT)
+    {
+        return;
+    }
+
+    s_pixels[index].red = red;
+    s_pixels[index].green = green;
+    s_pixels[index].blue = blue;
+}
+
+void ws2812b_set_all(uint8_t red, uint8_t green, uint8_t blue)
+{
+    uint8_t index;
+
+    for (index = 0U; index < WS2812B_LED_COUNT; index++)
+    {
+        ws2812b_set_pixel(index, red, green, blue);
+    }
+}
+
+void ws2812b_show(void)
+{
+    uint8_t pixel_index;
+    uint16_t buffer_index = 0U;
+
+    if (s_transmitting != 0U)
+    {
+        return;
+    }
+
+    for (pixel_index = 0U; pixel_index < WS2812B_LED_COUNT; pixel_index++)
+    {
+        ws2812b_encode_byte(s_pixels[pixel_index].green, s_pwm_buffer, &buffer_index);
+        ws2812b_encode_byte(s_pixels[pixel_index].red, s_pwm_buffer, &buffer_index);
+        ws2812b_encode_byte(s_pixels[pixel_index].blue, s_pwm_buffer, &buffer_index);
+    }
+
+    while (buffer_index < WS2812B_BUFFER_SIZE)
+    {
+        s_pwm_buffer[buffer_index] = 0U;
+        buffer_index++;
+    }
+
+    s_transmitting = 1U;
+    if (HAL_TIM_PWM_Start_DMA(
+            &htim2,
+            WS2812B_TIMER_CHANNEL,
+            s_pwm_buffer,
+            WS2812B_BUFFER_SIZE) != HAL_OK)
+    {
+        s_transmitting = 0U;
+    }
+}
+
+void ws2812b_run(void)
+{
+    static uint8_t pixel_index;
+    static uint8_t color_index;
+    const ws2812b_pixel_t *color = &s_run_colors[color_index];
+
+    ws2812b_set_all(0U, 0U, 0U);
+    ws2812b_set_pixel(pixel_index, color->red, color->green, color->blue);
+    ws2812b_show();
+
+    pixel_index++;
+    if (pixel_index >= WS2812B_LED_COUNT)
+    {
+        pixel_index = 0U;
+        color_index++;
+        if (color_index >= WS2812B_RUN_COLOR_COUNT)
+        {
+            color_index = 0U;
+        }
+    }
+}
+
+void ws2812b_gradient(void)
+{
+    static uint16_t phase;
+    ws2812b_pixel_t color = ws2812b_gradient_color(phase);
+
+    ws2812b_set_all(color.red, color.green, color.blue);
+    ws2812b_show();
+
+    phase += WS2812B_GRADIENT_STEP;
+    if (phase >= WS2812B_GRADIENT_RANGE)
+    {
+        phase = 0U;
+    }
+}
+
+void ws2812b_all_red(void)
+{
+    ws2812b_set_all(255U, 0U, 0U);
+    ws2812b_show();
+}
+
+void ws2812b_all_orange(void)
+{
+    ws2812b_set_all(255U, 165U, 0U);
+    ws2812b_show();
+}
+
+void ws2812b_all_yellow(void)
+{
+    ws2812b_set_all(255U, 255U, 0U);
+    ws2812b_show();
+}
+
+void ws2812b_all_green(void)
+{
+    ws2812b_set_all(0U, 255U, 0U);
+    ws2812b_show();
+}
+
+void ws2812b_all_cyan(void)
+{
+    ws2812b_set_all(0U, 255U, 255U);
+    ws2812b_show();
+}
+
+void ws2812b_all_blue(void)
+{
+    ws2812b_set_all(0U, 0U, 255U);
+    ws2812b_show();
+}
+
+void ws2812b_all_violet(void)
+{
+    ws2812b_set_all(205U, 0U, 205U);
+    ws2812b_show();
+}
+
+void ws2812b_all_white(void)
+{
+    ws2812b_set_all(255U, 255U, 255U);
+    ws2812b_show();
+}
+
+void ws2812b_all_off(void)
+{
+    ws2812b_set_all(0U, 0U, 0U);
+    ws2812b_show();
+}
+
+void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
+{
+    if ((htim->Instance == TIM2) && (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_3))
+    {
+        (void)HAL_TIM_PWM_Stop_DMA(htim, WS2812B_TIMER_CHANNEL);
+        __HAL_TIM_SET_COMPARE(htim, WS2812B_TIMER_CHANNEL, 0U);
+        s_transmitting = 0U;
+    }
+}

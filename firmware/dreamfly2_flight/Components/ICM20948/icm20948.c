@@ -1,103 +1,151 @@
-//
-// Created by 梅雨 on 2026/10/2.
-//
+/**
+ * @file icm20948.c
+ * @brief ICM-20948 driver using STM32 HAL I2C.
+ * @author 梅雨
+ * @date 2026-10-10
+ */
 
 #include "icm20948.h"
+
+#include "i2c.h"
 #include "icm20948_reg.h"
 
-uint8_t ICM20948_Check(void)
+#define ICM20948_I2C_TIMEOUT_MS 2U
+
+static uint8_t s_current_bank = ICM20948_INVALID_BANK;
+
+static bool icm20948_write_register(uint8_t register_address, uint8_t value)
 {
-    uint8_t ID;
-
-    ICM20948_SelectBank(USER_BANK_0);
-    ICM20948_ReadByte(B0_WHO_AM_I, &ID);
-
-    if (ID == ICM20948_DEVID)
-        return 1;
-    else
-        return 0;
+    return HAL_I2C_Mem_Write(&hi2c1,
+                             ICM20948_ADDR,
+                             register_address,
+                             I2C_MEMADD_SIZE_8BIT,
+                             &value,
+                             1U,
+                             ICM20948_I2C_TIMEOUT_MS) == HAL_OK;
 }
 
-// 设置低通滤波器带宽（带宽 <= 采样率 / 2）// 最低分辨率 = 2 ^ 15 / 4g = 8192LSB/g ）+-2000°/s（最低分辨率 = 2 ^ 15 / 2000 = 16.384°/s）
-void ICM20948_Init(void)
+static bool icm20948_read_register(uint8_t register_address, uint8_t *value)
 {
-    ICM20948_SelectBank(USER_BANK_0); // 选择 USER BANK 0 Register
-    ICM20948_WriteByte(B0_PWR_MGMT_1, 0x80); // 复位 ICM20948
-    Delay_ms(100);
-
-    ICM20948_Check();
-
-    ICM20948_WriteByte(B0_PWR_MGMT_1, 0x01); // 唤醒 ICM20948，并时选择钟源
-    Delay_ms(100);
-    ICM20948_WriteByte(B0_USER_CTRL, 0x20); // 使能 ICM20948 的 I2C 主模式
-
-    ICM20948_SelectBank(USER_BANK_2); // 选择 USER BANK 2 Register
-    ICM20948_WriteByte(B0_INT_ENABLE, 0x00); // 关闭 ICM20948 所有中断
-    ICM20948_WriteByte(B2_GYRO_SMPLRT_DIV, 0x02); // 陀螺仪采样频率 1.1 KHz / (1 + GYRO_SMPLRT_DIV)
-    ICM20948_WriteByte(B2_GYRO_CONFIG_1, BIT_GYRO_DLPCFG_3 | BIT_GYRO_FS_2000DPS | BIT_GYRO_DLPF); // 设置低通滤波器带宽和陀螺仪满量程
-    ICM20948_WriteByte(B2_ACCEL_SMPLRT_DIV_2, 0x02); // 加速度计采样频率 1.125 kHz/(1+ACCEL_SMPLRT_DIV)
-    ICM20948_WriteByte(B2_ACCEL_CONFIG, BIT_ACCEL_DLPCFG_3 | BIT_ACCEL_FS_4g | BIT_ACCEL_DLPF); // 设置低通滤波器带宽和加速度满量程
-    ICM20948_WriteByte(B2_ODR_ALIGN_EN, 0x01); // 启用 ODR 开始时间对齐
-
-    ICM20948_SelectBank(USER_BANK_3); // 选择 USER BANK 0 Register
-    ICM20948_WriteByte(B3_I2C_MST_CTRL, 0x07); // 设置 I2C 主模式速度为 400 kHz
+    return HAL_I2C_Mem_Read(&hi2c1,
+                            ICM20948_ADDR,
+                            register_address,
+                            I2C_MEMADD_SIZE_8BIT,
+                            value,
+                            1U,
+                            ICM20948_I2C_TIMEOUT_MS) == HAL_OK;
 }
 
-/******************************************************************************
- *函  数：void ICM20948_GetAccel(int16_t *accData)
- *功  能：读取加速度的原始数据
- *参  数：*accData 原始数据的指针
- *返回值：无
- *备  注：无
- *******************************************************************************/
-void ICM20948_GetAccel(int16_t* ax, int16_t* ay, int16_t* az)
+static bool icm20948_read_registers(uint8_t register_address,
+                                    uint8_t *data,
+                                    uint16_t size)
 {
-    uint8_t Buffer[6];
-    ICM20948_SelectBank(USER_BANK_0);
-    ICM20948_ReadBuffer(B0_ACCEL_XOUT_H, Buffer, 6);
-    *ax = (int16_t)((Buffer[0] << 8) | Buffer[1]);
-    *ay = (int16_t)((Buffer[2] << 8) | Buffer[3]);
-    *az = (int16_t)((Buffer[4] << 8) | Buffer[5]);
+    return HAL_I2C_Mem_Read(&hi2c1,
+                            ICM20948_ADDR,
+                            register_address,
+                            I2C_MEMADD_SIZE_8BIT,
+                            data,
+                            size,
+                            ICM20948_I2C_TIMEOUT_MS) == HAL_OK;
 }
 
-/******************************************************************************
- *函  数：void ICM20948_GetGyro(int16_t *gyroData)
- *功  能：读取陀螺仪的原始数据
- *参  数：*gyroData 原始数据的指针
- *返回值：无
- *备  注：无
- *******************************************************************************/
-void ICM20948_GetGyro(int16_t* gx, int16_t* gy, int16_t* gz)
+static bool icm20948_select_bank(uint8_t bank)
 {
-    uint8_t Buffer[6];
-    ICM20948_SelectBank(USER_BANK_0);
-    ICM20948_ReadBuffer(B0_GYRO_XOUT_H, Buffer, 6);
-    *gx = (int16_t)((Buffer[0] << 8) | Buffer[1]);
-    *gy = (int16_t)((Buffer[2] << 8) | Buffer[3]);
-    *gz = (int16_t)((Buffer[4] << 8) | Buffer[5]);
+    if (bank == s_current_bank)
+    {
+        return true;
+    }
+
+    if (!icm20948_write_register(REG_BANK_SEL, bank))
+    {
+        return false;
+    }
+
+    s_current_bank = bank;
+    return true;
 }
 
-void ICM20948_ReadByte(uint8_t reg_address, uint8_t* pByte)
+uint8_t icm20948_read_id(void)
 {
-    I2C1_ReadByte(ICM20948_ADDR, reg_address, pByte);
+    uint8_t device_id = 0U;
+
+    if (!icm20948_select_bank(USER_BANK_0))
+    {
+        return 0U;
+    }
+
+    (void)icm20948_read_register(WHO_AM_I, &device_id);
+    return device_id;
 }
 
-void ICM20948_WriteByte(uint8_t reg_address, uint8_t Byte)
+bool icm20948_init(void)
 {
-    I2C1_WriteByte(ICM20948_ADDR, reg_address, Byte);
+    s_current_bank = ICM20948_INVALID_BANK;
+
+    if (!icm20948_select_bank(USER_BANK_0)
+        || !icm20948_write_register(PWR_MGMT_1, DEVICE_RESET))
+    {
+        return false;
+    }
+
+    HAL_Delay(100U);
+    s_current_bank = ICM20948_INVALID_BANK;
+
+    if (icm20948_read_id() != ICM20948_DEVID)
+    {
+        return false;
+    }
+
+    if (!icm20948_write_register(PWR_MGMT_1, CLKSEL_AUTO))
+    {
+        return false;
+    }
+
+    HAL_Delay(10U);
+
+    if (!icm20948_write_register(USER_CTRL, I2C_MST_EN)
+        || !icm20948_select_bank(USER_BANK_2)
+        || !icm20948_write_register(GYRO_SMPLRT_DIV, 0x01U)
+        || !icm20948_write_register(GYRO_CONFIG_1,
+                                    GYRO_DLPFCFG_3
+                                    | GYRO_FS_SEL_2000DPS
+                                    | GYRO_FCHOICE_DLPF)
+        || !icm20948_write_register(ACCEL_SMPLRT_DIV_1, 0x00U)
+        || !icm20948_write_register(ACCEL_SMPLRT_DIV_2, 0x01U)
+        || !icm20948_write_register(ACCEL_CONFIG,
+                                    ACCEL_DLPFCFG_3
+                                    | ACCEL_FS_SEL_4G
+                                    | ACCEL_FCHOICE_DLPF)
+        || !icm20948_write_register(ODR_ALIGN_EN, 0x01U)
+        || !icm20948_select_bank(USER_BANK_3)
+        || !icm20948_write_register(I2C_MST_CTRL, I2C_MST_CLK_400KHZ)
+        || !icm20948_select_bank(USER_BANK_0))
+    {
+        return false;
+    }
+
+    return true;
 }
 
-void ICM20948_ReadBuffer(uint8_t reg_address, uint8_t* pBuffer, uint16_t NumByteToRead)
+bool icm20948_read(icm20948_t *data)
 {
-    I2C1_ReadBuffer(ICM20948_ADDR, reg_address, pBuffer, NumByteToRead);
-}
+    uint8_t buffer[12];
 
-void ICM20948_WriteBuffer(uint8_t reg_address, uint8_t* pBuffer, uint16_t NumByteToWrite)
-{
-    I2C1_WriteBuffer(ICM20948_ADDR, reg_address, pBuffer, NumByteToWrite);
-}
+    if ((data == 0)
+        || !icm20948_select_bank(USER_BANK_0)
+        || !icm20948_read_registers(ACCEL_XOUT_H,
+                                    buffer,
+                                    sizeof(buffer)))
+    {
+        return false;
+    }
 
-void ICM20948_SelectBank(uint8_t bank)
-{
-    ICM20948_WriteByte(REG_BANK_SEL, bank);
+    data->accel_x = (int16_t)(((uint16_t)buffer[0] << 8U) | buffer[1]);
+    data->accel_y = (int16_t)(((uint16_t)buffer[2] << 8U) | buffer[3]);
+    data->accel_z = (int16_t)(((uint16_t)buffer[4] << 8U) | buffer[5]);
+    data->gyro_x = (int16_t)(((uint16_t)buffer[6] << 8U) | buffer[7]);
+    data->gyro_y = (int16_t)(((uint16_t)buffer[8] << 8U) | buffer[9]);
+    data->gyro_z = (int16_t)(((uint16_t)buffer[10] << 8U) | buffer[11]);
+
+    return true;
 }

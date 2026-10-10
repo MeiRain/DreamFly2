@@ -1,29 +1,33 @@
-//
-// Created by 梅雨 on 2026/10/2.
-//
+/**
+ * @file icm20948.h
+ * @brief ICM-20948 accelerometer and gyroscope interface.
+ * @author 梅雨
+ * @date 2026-10-10
+ */
 
-#ifndef __ICM20948_H
-#define __ICM20948_H	
+#ifndef DREAMFLY2_COMPONENTS_ICM20948_H
+#define DREAMFLY2_COMPONENTS_ICM20948_H
 
-#include "i2c.h"
+#include <stdbool.h>
+#include <stdint.h>
 
 typedef struct
 {
-	int16_t AccX;
-	int16_t AccY;
-	int16_t AccZ;
-	int16_t GyrX;
-	int16_t GyrY;
-	int16_t GyrZ;
-} icm_t;
+    int16_t accel_x;
+    int16_t accel_y;
+    int16_t accel_z;
+    int16_t gyro_x;
+    int16_t gyro_y;
+    int16_t gyro_z;
+} icm20948_t;
 
-uint8_t ICM20948_Check(void);
-void ICM20948_Init(void);
-void ICM20948_GetAccel(int16_t *ax, int16_t *ay, int16_t *az);
-void ICM20948_GetGyro(int16_t *gx, int16_t *gy, int16_t *gz);
-void ICM20948_WriteByte(uint8_t reg_address, uint8_t Byte);
-void ICM20948_ReadByte(uint8_t reg_address, uint8_t* pByte);
-void ICM20948_ReadBuffer(uint8_t reg_address, uint8_t* pBuffer, uint16_t NumByteToRead);
-void ICM20948_SelectBank(uint8_t bank);
+/** @brief Initialize the ICM-20948 and verify its device ID. */
+bool icm20948_init(void);
 
-#endif
+/** @brief Read the ICM-20948 WHO_AM_I register. */
+uint8_t icm20948_read_id(void);
+
+/** @brief Read one set of raw accelerometer and gyroscope data. */
+bool icm20948_read(icm20948_t *data);
+
+#endif /* DREAMFLY2_COMPONENTS_ICM20948_H */

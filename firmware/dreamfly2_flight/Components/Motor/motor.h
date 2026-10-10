@@ -1,18 +1,27 @@
-#ifndef __MOTOR_H
-#define __MOTOR_H
+/**
+ * @file motor.h
+ * @brief Four-channel brushed motor driver interface.
+ * @author 梅雨
+ * @date 2026-10-10
+ */
 
-#include "stm32f4xx.h"
+#ifndef DREAMFLY2_COMPONENTS_MOTOR_H
+#define DREAMFLY2_COMPONENTS_MOTOR_H
+
+#include <stdint.h>
 
 typedef struct
 {
-	int16_t PWM1;
-	int16_t PWM2;	
-	int16_t PWM3;
-	int16_t PWM4;
+    int16_t pwm1;
+    int16_t pwm2;
+    int16_t pwm3;
+    int16_t pwm4;
 } motor_t;
 
-void Motor_Init(void);
-void Motor_PWMLimit(int16_t *motorx_pwm);
-void Motor_Control(motor_t* motor);
+/** @brief Start the four motor PWM channels with zero output. */
+void motor_init(void);
 
-#endif
+/** @brief Limit and write the four motor PWM outputs. */
+void motor_control(const motor_t *motor);
+
+#endif /* DREAMFLY2_COMPONENTS_MOTOR_H */
