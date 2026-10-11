@@ -14,7 +14,7 @@ void flight_system_task_entry(void *argument);
 /** @brief Run the high-rate flight-control loop. */
 void flight_control_task_entry(void *argument);
 
-/** @brief Read and process low-rate navigation sensors. */
+/** @brief Acquire and process flight-sensor data. */
 void flight_sensor_task_entry(void *argument);
 
 /** @brief Send low-priority flight debug data. */

@@ -204,4 +204,11 @@
 /* I2C_MST_CTRL bits 3:0: internal I2C master clock setting. */
 #define I2C_MST_CLK_400KHZ             0x07U
 
+/* I2C_SLVx_ADDR: auxiliary device transfer direction. */
+#define I2C_SLV_READ                   0x80U
+
+/* I2C_SLVx_CTRL: transfer enable and data length. */
+#define I2C_SLV_ENABLE                 0x80U
+#define I2C_SLV_LENGTH_MASK            0x0FU
+
 #endif /* DREAMFLY2_COMPONENTS_ICM20948_REG_H */

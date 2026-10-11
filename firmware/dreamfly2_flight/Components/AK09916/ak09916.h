@@ -1,31 +1,33 @@
-#ifndef __AK09916_H
-#define __AK09916_H	
+/**
+ * @file ak09916.h
+ * @brief AK09916 three-axis magnetometer interface.
+ * @author 姊呴洦
+ * @date 2026-10-11
+ */
 
-#include "stm32f4xx.h"
+#ifndef DREAMFLY2_COMPONENTS_AK09916_H
+#define DREAMFLY2_COMPONENTS_AK09916_H
 
-// AK09916原始数据
+#include <stdbool.h>
+#include <stdint.h>
+
 typedef struct
 {
-	int16_t MagX;
-	int16_t MagY;
-	int16_t MagZ;
-} _ak_raw;
+    float mag_x_ut;
+    float mag_y_ut;
+    float mag_z_ut;
+} ak09916_t;
 
-// AK09916原始数据
-typedef struct
-{
-	float MagX;
-	float MagY;
-	float MagZ;
-} _ak_physics;
+/**
+ * @brief Initialize the AK09916 in continuous 100 Hz measurement mode.
+ * @note The ICM20948 must be initialized first.
+ */
+bool ak09916_init(void);
 
-void AK09916_Check(void);
-void AK09916_Init(void);
-uint8_t AK09916_ReadMag(int16_t *mx, int16_t *my, int16_t *mz);
-void AK09916_GetData(void);
-void AK09916_ReadByte(uint8_t reg_address, uint8_t *pByte);
-void AK09916_WriteByte(uint8_t reg_address, uint8_t Byte);
-void AK09916_ReadBuffer(uint8_t reg_address, uint8_t *pBuffer, uint16_t NumByteToRead);
-void AK09916_WriteBuffer(uint8_t reg_address, uint8_t *pBuffer, uint16_t NumByteToWrite);
+/** @brief Read the AK09916 WIA2 device ID. */
+uint8_t ak09916_read_id(void);
 
-#endif
+/** @brief Read one magnetic-field sample in microtesla. */
+bool ak09916_read(ak09916_t *mag_data);
+
+#endif /* DREAMFLY2_COMPONENTS_AK09916_H */

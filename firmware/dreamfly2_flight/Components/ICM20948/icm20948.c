@@ -11,6 +11,9 @@
 #include "icm20948_reg.h"
 
 #define ICM20948_I2C_TIMEOUT_MS 2U
+#define ICM20948_AUX_TRANSFER_DELAY_MS 1U
+#define ICM20948_ACC_LSB_PER_G 8192.0f
+#define ICM20948_GYRO_LSB_PER_DPS 16.4f
 
 static uint8_t s_current_bank = ICM20948_INVALID_BANK;
 
@@ -127,11 +130,17 @@ bool icm20948_init(void)
     return true;
 }
 
-bool icm20948_read(icm20948_t *data)
+bool icm20948_read(icm20948_t *imu_data)
 {
     uint8_t buffer[12];
+    int16_t raw_acc_x;
+    int16_t raw_acc_y;
+    int16_t raw_acc_z;
+    int16_t raw_gyro_x;
+    int16_t raw_gyro_y;
+    int16_t raw_gyro_z;
 
-    if ((data == 0)
+    if ((imu_data == 0)
         || !icm20948_select_bank(USER_BANK_0)
         || !icm20948_read_registers(ACCEL_XOUT_H,
                                     buffer,
@@ -140,12 +149,78 @@ bool icm20948_read(icm20948_t *data)
         return false;
     }
 
-    data->accel_x = (int16_t)(((uint16_t)buffer[0] << 8U) | buffer[1]);
-    data->accel_y = (int16_t)(((uint16_t)buffer[2] << 8U) | buffer[3]);
-    data->accel_z = (int16_t)(((uint16_t)buffer[4] << 8U) | buffer[5]);
-    data->gyro_x = (int16_t)(((uint16_t)buffer[6] << 8U) | buffer[7]);
-    data->gyro_y = (int16_t)(((uint16_t)buffer[8] << 8U) | buffer[9]);
-    data->gyro_z = (int16_t)(((uint16_t)buffer[10] << 8U) | buffer[11]);
+    raw_acc_x = (int16_t)(((uint16_t)buffer[0] << 8U) | buffer[1]);
+    raw_acc_y = (int16_t)(((uint16_t)buffer[2] << 8U) | buffer[3]);
+    raw_acc_z = (int16_t)(((uint16_t)buffer[4] << 8U) | buffer[5]);
+    raw_gyro_x = (int16_t)(((uint16_t)buffer[6] << 8U) | buffer[7]);
+    raw_gyro_y = (int16_t)(((uint16_t)buffer[8] << 8U) | buffer[9]);
+    raw_gyro_z = (int16_t)(((uint16_t)buffer[10] << 8U) | buffer[11]);
+
+    imu_data->acc_x_g = (float)raw_acc_x / ICM20948_ACC_LSB_PER_G;
+    imu_data->acc_y_g = (float)raw_acc_y / ICM20948_ACC_LSB_PER_G;
+    imu_data->acc_z_g = (float)raw_acc_z / ICM20948_ACC_LSB_PER_G;
+    imu_data->gyro_x_dps = (float)raw_gyro_x / ICM20948_GYRO_LSB_PER_DPS;
+    imu_data->gyro_y_dps = (float)raw_gyro_y / ICM20948_GYRO_LSB_PER_DPS;
+    imu_data->gyro_z_dps = (float)raw_gyro_z / ICM20948_GYRO_LSB_PER_DPS;
 
     return true;
+}
+
+bool icm20948_aux_write(uint8_t device_address,
+                        uint8_t register_address,
+                        uint8_t value)
+{
+    if ((device_address > 0x7FU)
+        || !icm20948_select_bank(USER_BANK_3)
+        || !icm20948_write_register(I2C_SLV0_ADDR, device_address)
+        || !icm20948_write_register(I2C_SLV0_REG, register_address)
+        || !icm20948_write_register(I2C_SLV0_DO, value)
+        || !icm20948_write_register(I2C_SLV0_CTRL,
+                                    I2C_SLV_ENABLE | 1U))
+    {
+        return false;
+    }
+
+    HAL_Delay(ICM20948_AUX_TRANSFER_DELAY_MS);
+
+    return icm20948_write_register(I2C_SLV0_CTRL, 0U)
+           && icm20948_select_bank(USER_BANK_0);
+}
+
+bool icm20948_aux_read(uint8_t device_address,
+                       uint8_t register_address,
+                       uint8_t *data,
+                       uint8_t size)
+{
+    bool read_success;
+
+    if ((data == 0)
+        || (device_address > 0x7FU)
+        || (size == 0U)
+        || (size > I2C_SLV_LENGTH_MASK)
+        || !icm20948_select_bank(USER_BANK_3)
+        || !icm20948_write_register(I2C_SLV0_ADDR,
+                                    device_address | I2C_SLV_READ)
+        || !icm20948_write_register(I2C_SLV0_REG, register_address)
+        || !icm20948_write_register(I2C_SLV0_CTRL,
+                                    I2C_SLV_ENABLE | size))
+    {
+        return false;
+    }
+
+    HAL_Delay(ICM20948_AUX_TRANSFER_DELAY_MS);
+
+    read_success = icm20948_select_bank(USER_BANK_0)
+                   && icm20948_read_registers(EXT_SLV_SENS_DATA_00,
+                                              data,
+                                              size);
+
+    if (!icm20948_select_bank(USER_BANK_3)
+        || !icm20948_write_register(I2C_SLV0_CTRL, 0U)
+        || !icm20948_select_bank(USER_BANK_0))
+    {
+        return false;
+    }
+
+    return read_success;
 }

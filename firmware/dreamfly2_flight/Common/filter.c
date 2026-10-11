@@ -59,27 +59,56 @@ void filter_moving_average(float data, float *filtered_data, uint8_t window_size
     *filtered_data = s_sum / (float)s_sample_count;
 }
 
-float filter_kalman_1d_update(filter_kalman_1d_t *filter, float input)
+void filter_kalman_1d_init(filter_kalman_1d_t *filter,
+                           float process_noise,
+                           float measurement_noise,
+                           float initial_covariance,
+                           float initial_output)
 {
-    float predicted_covariance;
-    float kalman_gain;
+    if (filter == NULL)
+    {
+        return;
+    }
+
+    filter->process_noise = process_noise;
+    filter->measurement_noise = measurement_noise;
+    filter->covariance = initial_covariance;
+    filter->output = initial_output;
+}
+
+float filter_kalman_1d(filter_kalman_1d_t *filter, float input)
+{
+    float p_pred;
+    float k;
 
     if (filter == NULL)
     {
         return input;
     }
 
-    predicted_covariance = filter->covariance + filter->process_noise;
-    kalman_gain = predicted_covariance
-                  / (predicted_covariance + filter->measurement_noise);
+    p_pred = filter->covariance + filter->process_noise;
+    k = p_pred / (p_pred + filter->measurement_noise);
 
-    filter->output += kalman_gain * (input - filter->output);
-    filter->covariance = (1.0f - kalman_gain) * predicted_covariance;
+    filter->output += k * (input - filter->output);
+    filter->covariance = (1.0f - k) * p_pred;
 
     return filter->output;
 }
 
-float filter_low_pass_update(filter_low_pass_t *filter, float input)
+void filter_low_pass_init(filter_low_pass_t *filter,
+                          float factor,
+                          float initial_output)
+{
+    if (filter == NULL)
+    {
+        return;
+    }
+
+    filter->factor = factor;
+    filter->output = initial_output;
+}
+
+float filter_low_pass(filter_low_pass_t *filter, float input)
 {
     if (filter == NULL)
     {
