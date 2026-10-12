@@ -8,6 +8,22 @@
 #ifndef DREAMFLY2_APPLICATION_FLIGHT_H
 #define DREAMFLY2_APPLICATION_FLIGHT_H
 
+#include <stdbool.h>
+
+typedef struct
+{
+    float roll;
+    float pitch;
+    float yaw;
+} flight_axis_t;
+
+/** @brief Calculate rate PID outputs; target and measurement are in degrees/s. */
+void flight_rate_control(const flight_axis_t *target_dps,
+                         const flight_axis_t *measurement_dps,
+                         float sample_time_s,
+                         bool integral_enabled,
+                         flight_axis_t *output);
+
 typedef enum
 {
     FLIGHT_STATUS_WAIT_PAIRING = 0,

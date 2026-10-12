@@ -37,6 +37,9 @@ static bool s_sensor_status_valid;
 static bool s_accel_calibrated;
 static bool s_latest_attitude_6axis_valid;
 static bool s_latest_attitude_9axis_valid;
+static flight_axis_t s_latest_rate_output;
+static bool s_latest_rate_output_valid;
+static bool s_imu_pending_control;
 
 void flight_system_task_entry(void *argument)
 {
@@ -64,6 +67,11 @@ void flight_system_task_entry(void *argument)
 void flight_control_task_entry(void *argument)
 {
     uint32_t next_wake_tick;
+    sensors_imu_t imu;
+    flight_axis_t target_dps = {0.0f, 0.0f, 0.0f};
+    flight_axis_t measurement_dps;
+    flight_axis_t output;
+    bool sample_ready;
 
     (void)argument;
 
@@ -72,6 +80,25 @@ void flight_control_task_entry(void *argument)
 
     for (;;)
     {
+        (void)osKernelLock();
+        imu = s_latest_imu;
+        sample_ready = s_imu_pending_control;
+        s_imu_pending_control = false;
+        (void)osKernelUnlock();
+
+        if (sample_ready)
+        {
+            measurement_dps = (flight_axis_t){imu.gyro_x_dps,
+                                               imu.gyro_y_dps,
+                                               imu.gyro_z_dps};
+            flight_rate_control(&target_dps, &measurement_dps,
+                                FLIGHT_ATTITUDE_PERIOD_S, false, &output);
+            (void)osKernelLock();
+            s_latest_rate_output = output;
+            s_latest_rate_output_valid = true;
+            (void)osKernelUnlock();
+        }
+
         next_wake_tick += FLIGHT_CONTROL_TASK_PERIOD_TICKS;
         osDelayUntil(next_wake_tick);
     }
@@ -110,8 +137,11 @@ void flight_sensor_task_entry(void *argument)
 
         if (sensors_ready && sensors_read_imu(&imu))
         {
+            (void)osKernelLock();
             s_latest_imu = imu;
             s_latest_imu_valid = true;
+            s_imu_pending_control = true;
+            (void)osKernelUnlock();
             imu_sample_valid = true;
 
             acc_g = (attitude_vector_t){imu.acc_x_g,
@@ -186,6 +216,8 @@ void flight_debug_task_entry(void *argument)
     sensors_status_t status;
     attitude_t attitude_6axis;
     attitude_t attitude_9axis;
+    flight_axis_t rate_output;
+    bool rate_output_valid;
     uint32_t next_wake_tick;
     uint8_t debug_page = 0U;
     bool imu_valid;
@@ -217,6 +249,8 @@ void flight_debug_task_entry(void *argument)
         accel_calibrated = s_accel_calibrated;
         attitude_6axis_valid = s_latest_attitude_6axis_valid;
         attitude_9axis_valid = s_latest_attitude_9axis_valid;
+        rate_output = s_latest_rate_output;
+        rate_output_valid = s_latest_rate_output_valid;
         (void)osKernelUnlock();
 
         if (status_valid && !status_reported)
@@ -260,8 +294,14 @@ void flight_debug_task_entry(void *argument)
                          attitude_9axis.yaw_deg);
         }
 
+        else if ((debug_page == 3U) && rate_output_valid)
+        {
+            debug_printf("rate_pid=%.2f,%.2f,%.2f target=0,0,0 dps\r\n",
+                         rate_output.roll, rate_output.pitch, rate_output.yaw);
+        }
+
         ++debug_page;
-        if (debug_page >= 3U)
+        if (debug_page >= 4U)
         {
             debug_page = 0U;
         }

@@ -8,6 +8,7 @@
 #include "pid.h"
 
 #include <stddef.h>
+#include <math.h>
 
 static float pid_limit(float value, float limit)
 {
@@ -28,6 +29,7 @@ void pid_init(pid_t *pid,
               float kp,
               float ki,
               float kd,
+              float integral_threshold,
               float integral_limit,
               float output_limit)
 {
@@ -39,6 +41,9 @@ void pid_init(pid_t *pid,
     pid->kp = kp;
     pid->ki = ki;
     pid->kd = kd;
+    pid->target = 0.0f;
+    pid->measurement = 0.0f;
+    pid->integral_threshold = integral_threshold;
     pid->integral_limit = integral_limit;
     pid->output_limit = output_limit;
     pid_reset(pid);
@@ -53,43 +58,51 @@ void pid_reset(pid_t *pid)
 
     pid->integral = 0.0f;
     pid->previous_error = 0.0f;
+    pid->error = 0.0f;
+    pid->output = 0.0f;
 }
 
-float pid_calculate(pid_t *pid,
-                    float target,
-                    float measurement,
+void pid_calculate(pid_t *pid,
                     float sample_time_s,
                     bool integral_enabled)
 {
-    float error;
     float derivative;
-    float output;
 
-    if ((pid == NULL)
-        || (sample_time_s <= 0.0f)
+    if (pid == NULL)
+    {
+        return;
+    }
+
+    if ((sample_time_s <= 0.0f)
+        || (pid->integral_threshold < 0.0f)
         || (pid->integral_limit < 0.0f)
         || (pid->output_limit <= 0.0f))
     {
-        return 0.0f;
+        pid->output = 0.0f;
+        return;
     }
 
-    error = target - measurement;
-    derivative = (error - pid->previous_error) / sample_time_s;
+    pid->error = pid->target - pid->measurement;
+    derivative = (pid->error - pid->previous_error) / sample_time_s;
 
     if (integral_enabled)
     {
-        pid->integral += error * sample_time_s;
-        pid->integral = pid_limit(pid->integral, pid->integral_limit);
+        if ((pid->integral_threshold == 0.0f)
+            || (fabsf(pid->error) < pid->integral_threshold))
+        {
+            pid->integral += pid->error * sample_time_s;
+            pid->integral = pid_limit(pid->integral, pid->integral_limit);
+        }
     }
     else
     {
         pid->integral = 0.0f;
     }
 
-    output = pid->kp * error
+    pid->output = pid->kp * pid->error
              + pid->ki * pid->integral
              + pid->kd * derivative;
-    pid->previous_error = error;
+    pid->previous_error = pid->error;
 
-    return pid_limit(output, pid->output_limit);
+    pid->output = pid_limit(pid->output, pid->output_limit);
 }

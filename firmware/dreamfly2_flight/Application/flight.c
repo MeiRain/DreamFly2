@@ -12,6 +12,7 @@
 #include "led.h"
 #include "battery.h"
 #include "ws2812b.h"
+#include "pid.h"
 
 #define FLIGHT_RGB_BRIGHTNESS 64U
 #define FLIGHT_ERROR_FLASH_COUNT 5U
@@ -23,6 +24,9 @@
 #define FLIGHT_RIGHT_LED_2 3U
 
 static float s_battery_voltage_v;
+static pid_t s_roll_pid;
+static pid_t s_pitch_pid;
+static pid_t s_yaw_pid;
 static flight_status_t s_flight_status = FLIGHT_STATUS_WAIT_PAIRING;
 static flight_sensor_t s_sensor_error = FLIGHT_SENSOR_NONE;
 static uint8_t s_error_flash_count;
@@ -91,6 +95,34 @@ void flight_init(void)
 {
     led_init();
     ws2812b_init();
+
+    /* P-only bench demonstration; these gains are not tuned for flight. */
+    pid_init(&s_roll_pid, 1.0f, 0.0f, 0.0f, 10.0f, 50.0f, 100.0f);
+    pid_init(&s_pitch_pid, 1.0f, 0.0f, 0.0f, 10.0f, 50.0f, 100.0f);
+    pid_init(&s_yaw_pid, 1.0f, 0.0f, 0.0f, 10.0f, 50.0f, 100.0f);
+}
+
+void flight_rate_control(const flight_axis_t *target_dps,
+                         const flight_axis_t *measurement_dps,
+                         float sample_time_s,
+                         bool integral_enabled,
+                         flight_axis_t *output)
+{
+    s_roll_pid.target = target_dps->roll;
+    s_roll_pid.measurement = measurement_dps->roll;
+    pid_calculate(&s_roll_pid, sample_time_s, integral_enabled);
+
+    s_pitch_pid.target = target_dps->pitch;
+    s_pitch_pid.measurement = measurement_dps->pitch;
+    pid_calculate(&s_pitch_pid, sample_time_s, integral_enabled);
+
+    s_yaw_pid.target = target_dps->yaw;
+    s_yaw_pid.measurement = measurement_dps->yaw;
+    pid_calculate(&s_yaw_pid, sample_time_s, integral_enabled);
+
+    output->roll = s_roll_pid.output;
+    output->pitch = s_pitch_pid.output;
+    output->yaw = s_yaw_pid.output;
 }
 
 void flight_led_toggle(void)
