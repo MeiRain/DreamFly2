@@ -17,7 +17,16 @@ typedef struct
     float yaw;
 } flight_axis_t;
 
-/** @brief Calculate rate PID outputs; target and measurement are in degrees/s. */
+/**
+ * @brief Calculate three rate PID outputs without applying them to the motors.
+ * @param target_dps Target body-axis angular rates in degrees/s.
+ * @param measurement_dps Measured body-axis angular rates in degrees/s.
+ * @param sample_time_s Controller period in seconds.
+ * @param integral_enabled Whether the PID integrals may accumulate.
+ * @param[out] output Controller outputs, not motor compare values.
+ * @note Call after flight_init(); all pointers must be valid. PID state is private
+ *       to this module, so calls must be serialized. Current gains are bench defaults.
+ */
 void flight_rate_control(const flight_axis_t *target_dps,
                          const flight_axis_t *measurement_dps,
                          float sample_time_s,
@@ -43,13 +52,14 @@ typedef enum
 
 /**
  * @brief Initialize flight-state indicators.
+ * @note Also initializes bench PID gains. GPIO, TIM2 and DMA must be ready first.
  */
 void flight_init(void);
 
 /** @brief Toggle the on-board flight status LED. */
 void flight_led_toggle(void);
 
-/** @brief Set the current flight status shown by the RGB LEDs. */
+/** @brief Select an RGB indication state; does not change actual arming or flight mode. */
 void flight_set_status(flight_status_t status);
 
 /**
@@ -58,7 +68,11 @@ void flight_set_status(flight_status_t status);
  */
 void flight_set_sensor_error(flight_sensor_t sensor);
 
-/** @brief Update the RGB indication for the current flight state. */
+/**
+ * @brief Request the current fault or flight-state RGB indication.
+ * @note Fault indication takes priority. Call periodically from one task;
+ *       animation and fault blink speeds depend on the call interval.
+ */
 void flight_update_rgb(void);
 
 /**

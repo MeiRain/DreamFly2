@@ -13,8 +13,8 @@
 #include "filter.h"
 
 #define BATTERY_ADC_FULL_SCALE 4095.0f
-#define BATTERY_ADC_REFERENCE_VOLTAGE_V 3.31f
-#define BATTERY_VOLTAGE_DIVIDER_GAIN 2.0f
+#define BATTERY_ADC_REFERENCE_VOLTAGE_V 3.31f /* Measured ADC supply voltage. */
+#define BATTERY_VOLTAGE_DIVIDER_GAIN 2.0f /* Undo the board's 1:2 divider. */
 #define BATTERY_FILTER_WINDOW_SIZE 6U
 #define BATTERY_ADC_TIMEOUT_MS 1U
 

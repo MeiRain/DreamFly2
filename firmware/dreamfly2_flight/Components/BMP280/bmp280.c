@@ -39,8 +39,9 @@ typedef struct
 } bmp280_calibration_t;
 
 static bmp280_calibration_t s_calibration;
-static int32_t s_temperature_fine;
+static int32_t s_temperature_fine; /* Datasheet t_fine from the latest temperature calculation. */
 
+/** @brief Write one register using blocking I2C1; return HAL transfer success. */
 static bool bmp280_write_register(uint8_t register_address, uint8_t value)
 {
     return HAL_I2C_Mem_Write(&hi2c1,
@@ -52,6 +53,7 @@ static bool bmp280_write_register(uint8_t register_address, uint8_t value)
                              BMP280_I2C_TIMEOUT_MS) == HAL_OK;
 }
 
+/** @brief Read one register; value must point to a writable byte. */
 static bool bmp280_read_register(uint8_t register_address, uint8_t *value)
 {
     return HAL_I2C_Mem_Read(&hi2c1,
@@ -63,6 +65,7 @@ static bool bmp280_read_register(uint8_t register_address, uint8_t *value)
                             BMP280_I2C_TIMEOUT_MS) == HAL_OK;
 }
 
+/** @brief Read consecutive registers into a buffer with at least size bytes. */
 static bool bmp280_read_registers(uint8_t register_address,
                                   uint8_t *data,
                                   uint16_t size)
@@ -76,6 +79,7 @@ static bool bmp280_read_registers(uint8_t register_address,
                             BMP280_I2C_TIMEOUT_MS) == HAL_OK;
 }
 
+/** @brief Read a low-byte-first unsigned factory coefficient; update only on success. */
 static bool bmp280_read_uint16(uint8_t register_address, uint16_t *value)
 {
     uint8_t data[2];
@@ -90,6 +94,7 @@ static bool bmp280_read_uint16(uint8_t register_address, uint16_t *value)
     return true;
 }
 
+/** @brief Read a low-byte-first signed factory coefficient; update only on success. */
 static bool bmp280_read_int16(uint8_t register_address, int16_t *value)
 {
     uint16_t raw_value;
@@ -103,6 +108,7 @@ static bool bmp280_read_int16(uint8_t register_address, int16_t *value)
     return true;
 }
 
+/** @brief Load factory coefficients; reject transfer failure or a zero pressure divisor. */
 static bool bmp280_read_calibration(void)
 {
     return bmp280_read_uint16(DIG_T1_LSB, &s_calibration.t1)
@@ -120,6 +126,7 @@ static bool bmp280_read_calibration(void)
            && (s_calibration.p1 != 0U);
 }
 
+/** @brief Compensate a raw ADC temperature; return degrees C * 100 and update t_fine. */
 static int32_t bmp280_compensate_temperature(int32_t raw_temperature)
 {
     int32_t delta;
@@ -136,6 +143,10 @@ static int32_t bmp280_compensate_temperature(int32_t raw_temperature)
     return (s_temperature_fine * 5 + 128) >> 8;
 }
 
+/**
+ * @brief Return pressure in Pa * 256 (Q24.8), or 0 for a zero divisor.
+ * @note Temperature compensation must run first to refresh t_fine.
+ */
 static uint32_t bmp280_compensate_pressure(int32_t raw_pressure)
 {
     int64_t var1;

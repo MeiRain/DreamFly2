@@ -12,15 +12,15 @@
 
 typedef struct
 {
-    float process_noise;
-    float measurement_noise;
-    float covariance;
-    float output;
+    float process_noise; /**< Process variance added per call. */
+    float measurement_noise; /**< Measurement variance, in input units squared. */
+    float covariance; /**< Estimated variance, in input units squared. */
+    float output; /**< Latest estimate, in the same unit as the input. */
 } filter_kalman_1d_t;
 
 typedef struct
 {
-    float factor;
+    float factor; /**< New-sample weight; old output has weight 1 - factor. */
     float output;
 } filter_low_pass_t;
 
@@ -31,6 +31,8 @@ typedef struct
  * @param measurement_noise Measurement-noise covariance.
  * @param initial_covariance Initial estimate covariance.
  * @param initial_output Initial filtered value.
+ * @note NULL is ignored. Caller supplies nonnegative covariances and noise
+ *       values that keep the Kalman denominator positive.
  */
 void filter_kalman_1d_init(filter_kalman_1d_t *filter,
                            float process_noise,
@@ -47,6 +49,8 @@ void filter_kalman_1d_init(filter_kalman_1d_t *filter,
  * @param data New sample.
  * @param[out] filtered_data Filtered result.
  * @param window_size Number of samples, from 1 to 20.
+ * @note One shared stream only; changing the window size resets its history.
+ *       NULL output or an invalid window leaves the output and state unchanged.
  */
 void filter_moving_average(float data, float *filtered_data, uint8_t window_size);
 
@@ -64,6 +68,7 @@ float filter_kalman_1d(filter_kalman_1d_t *filter, float input);
  * @param filter Filter instance.
  * @param factor Weight of the new input, normally in the range [0, 1].
  * @param initial_output Initial filtered value.
+ * @note NULL is ignored; factor is not clamped by the function.
  */
 void filter_low_pass_init(filter_low_pass_t *filter,
                           float factor,

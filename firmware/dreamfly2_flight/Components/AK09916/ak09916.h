@@ -20,14 +20,20 @@ typedef struct
 
 /**
  * @brief Initialize the AK09916 in continuous 100 Hz measurement mode.
- * @note The ICM20948 must be initialized first.
+ * @return true on success, false on device ID or auxiliary transfer failure.
+ * @note The ICM20948 must be initialized first; uses blocking startup delays.
  */
 bool ak09916_init(void);
 
-/** @brief Read the AK09916 WIA2 device ID. */
+/** @brief Read WIA2; returns 0 on transfer failure (expected ID: 0x09). */
 uint8_t ak09916_read_id(void);
 
-/** @brief Read one magnetic-field sample in microtesla. */
+/**
+ * @brief Read one magnetic-field sample in microtesla, in sensor axes.
+ * @param[out] mag_data Uncalibrated magnetic field; unchanged on failure.
+ * @return true on success; false for NULL, transfer failure, no new data or overflow.
+ * @note Call after ak09916_init(); auxiliary transfer includes a blocking delay.
+ */
 bool ak09916_read(ak09916_t *mag_data);
 
 #endif /* DREAMFLY2_COMPONENTS_AK09916_H */

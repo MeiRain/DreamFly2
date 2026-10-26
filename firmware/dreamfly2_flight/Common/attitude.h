@@ -12,6 +12,7 @@
 
 typedef struct
 {
+    /* Components in one common body frame; units are set by each function parameter. */
     float x;
     float y;
     float z;
@@ -26,7 +27,8 @@ typedef struct
 
 /**
  * @brief Initialize both attitude quaternions from acceleration.
- * @param acc_g Acceleration in g. A zero vector initializes a level attitude.
+ * @param acc_g Acceleration in g; NULL or a near-zero vector initializes level.
+ * @note Resets both solutions and their correction integrals; initial yaw is zero.
  */
 void attitude_init(const attitude_vector_t *acc_g);
 
@@ -37,6 +39,9 @@ void attitude_init(const attitude_vector_t *acc_g);
  * @param sample_time_s Solution period in seconds.
  * @param[out] attitude_deg Calculated Euler angles in degrees.
  * @return true when the input and quaternion are valid.
+ * @note Maintains private six-axis state; call serially at the supplied period.
+ *       Gravity correction is gated by acceleration magnitude. Absolute yaw
+ *       cannot be corrected without an external heading reference.
  */
 bool attitude_solve_6axis(const attitude_vector_t *acc_g,
                           const attitude_vector_t *gyro_dps,
@@ -50,7 +55,9 @@ bool attitude_solve_6axis(const attitude_vector_t *acc_g,
  * @param mag_ut Magnetic field in microtesla, aligned with the IMU body axes.
  * @param sample_time_s Solution period in seconds.
  * @param[out] attitude_deg Calculated Euler angles in degrees.
- * @return true when the input and quaternion are valid.
+ * @return false for NULL pointers, a nonpositive period or near-zero vector/quaternion norms.
+ * @note Maintains independent nine-axis state. Use calibrated, axis-aligned magnetic
+ *       data; this demonstration solution does not reject magnetic interference.
  */
 bool attitude_solve_9axis(const attitude_vector_t *acc_g,
                           const attitude_vector_t *gyro_dps,

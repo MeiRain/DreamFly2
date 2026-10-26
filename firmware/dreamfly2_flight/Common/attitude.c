@@ -10,6 +10,8 @@
  * q0-q3: quaternion; a: normalized acceleration; g: angular rate (rad/s);
  * m: normalized magnetic field; v: estimated gravity direction;
  * w: estimated magnetic direction; e: direction error; dt: sample time (s).
+ * h: magnetic field rotated into the reference frame; bx/bz: its horizontal
+ * and vertical components; ex_int/ey_int/ez_int: integrated direction errors.
  */
 
 #include "attitude.h"
@@ -22,6 +24,10 @@
 #define ATTITUDE_DEG_TO_RAD 0.01745329252f
 #define ATTITUDE_RAD_TO_DEG 57.29577951f
 #define ATTITUDE_MIN_NORM 0.001f
+/* Initial six-axis tuning: reject obvious linear acceleration; learn bias slowly. */
+#define ATTITUDE_ACCEL_MIN_G 0.85f
+#define ATTITUDE_ACCEL_MAX_G 1.15f
+#define ATTITUDE_BIAS_MAX_RATE_DPS 20.0f
 
 typedef struct
 {
@@ -34,9 +40,15 @@ typedef struct
     float ez_int;
 } attitude_state_t;
 
+/* Independent states allow the flight and demonstration solutions to run together. */
 static attitude_state_t s_6axis_state = {.q0 = 1.0f};
 static attitude_state_t s_9axis_state = {.q0 = 1.0f};
 
+/**
+ * @brief Integrate corrected angular rates in rad/s over dt seconds, normalize
+ *        the quaternion and extract Euler angles in degrees.
+ * @return false if the resulting quaternion norm is too small.
+ */
 static bool attitude_update(attitude_state_t *state,
                             float gx,
                             float gy,
@@ -180,7 +192,8 @@ bool attitude_solve_6axis(const attitude_vector_t *acc_g,
     gz = gyro_dps->z * ATTITUDE_DEG_TO_RAD;
 
     norm = sqrtf(ax * ax + ay * ay + az * az);
-    if (norm >= ATTITUDE_MIN_NORM)
+    /* Motion acceleration is not a reliable gravity reference. */
+    if ((norm >= ATTITUDE_ACCEL_MIN_G) && (norm <= ATTITUDE_ACCEL_MAX_G))
     {
         ax /= norm;
         ay /= norm;
@@ -197,14 +210,25 @@ bool attitude_solve_6axis(const attitude_vector_t *acc_g,
         ey = az * vx - ax * vz;
         ez = ax * vy - ay * vx;
 
-        s_6axis_state.ex_int += ex * dt;
-        s_6axis_state.ey_int += ey * dt;
-        s_6axis_state.ez_int += ez * dt;
+        /* Avoid learning filter lag / vigorous-motion error as gyro bias. */
+        if ((fabsf(gyro_dps->x) <= ATTITUDE_BIAS_MAX_RATE_DPS)
+            && (fabsf(gyro_dps->y) <= ATTITUDE_BIAS_MAX_RATE_DPS)
+            && (fabsf(gyro_dps->z) <= ATTITUDE_BIAS_MAX_RATE_DPS))
+        {
+            s_6axis_state.ex_int += ex * dt;
+            s_6axis_state.ey_int += ey * dt;
+            s_6axis_state.ez_int += ez * dt;
+        }
 
-        gx += ATTITUDE_KP * ex + ATTITUDE_KI * s_6axis_state.ex_int;
-        gy += ATTITUDE_KP * ey + ATTITUDE_KI * s_6axis_state.ey_int;
-        gz += ATTITUDE_KP * ez + ATTITUDE_KI * s_6axis_state.ez_int;
+        gx += ATTITUDE_KP * ex;
+        gy += ATTITUDE_KP * ey;
+        gz += ATTITUDE_KP * ez;
     }
+
+    /* Retain the previously learned correction while gravity is unreliable. */
+    gx += ATTITUDE_KI * s_6axis_state.ex_int;
+    gy += ATTITUDE_KI * s_6axis_state.ey_int;
+    gz += ATTITUDE_KI * s_6axis_state.ez_int;
 
     return attitude_update(&s_6axis_state, gx, gy, gz, dt, attitude_deg);
 }

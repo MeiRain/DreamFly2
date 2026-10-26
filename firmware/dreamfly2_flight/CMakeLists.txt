@@ -45,13 +45,30 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+        Core/Src/softi2c.c
         Components/LED/led.c
         Components/Battery/battery.c
+        Components/Motor/motor.c
+        Components/WS2812B/ws2812b.c
+
+        Components/ICM20948/icm20948.c
+        Components/AK09916/ak09916.c
+        Components/BMP280/bmp280.c
+        Components/PMW3901/
+        Components/VL53L1/
+
+        Components/Si24R1/si24r1.c
+
         Common/filter.c
+        Common/anoprotocol.c
+        Common/rcprotocol.c
+        Common/attitude.c
+        Common/pid.c
+
         Application/debug.c
         Application/flight.c
         Application/rtos.c
-
+        Application/sensors.c
 )
 
 # Add include paths
@@ -59,9 +76,14 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
         Components/LED
         Components/Battery
+        Components/WS2812B
+        Components/Motor
+        Components/ICM20948
+        Components/BMP280
+        Components/AK09916
         Common
         Application
-
+        Components/Si24R1
 
 )
 
@@ -78,4 +100,9 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
 
     # Add user defined libraries
+)
+
+# Enable floating-point formatting for printf/vsnprintf with nano.specs.
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+    -u _printf_float
 )

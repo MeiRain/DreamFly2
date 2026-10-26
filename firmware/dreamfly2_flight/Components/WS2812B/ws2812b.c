@@ -43,9 +43,10 @@ static const ws2812b_pixel_t s_run_colors[WS2812B_RUN_COLOR_COUNT] =
 };
 
 static ws2812b_pixel_t s_pixels[WS2812B_LED_COUNT];
-static uint32_t s_pwm_buffer[WS2812B_BUFFER_SIZE];
-static volatile uint8_t s_transmitting;
+static uint32_t s_pwm_buffer[WS2812B_BUFFER_SIZE]; /* DMA-owned until completion. */
+static volatile uint8_t s_transmitting; /* Shared by the calling task and DMA callback. */
 
+/** @brief Map a wrapped hue phase to a brightness-limited RGB color. */
 static ws2812b_pixel_t ws2812b_gradient_color(uint16_t hue)
 {
     ws2812b_pixel_t color = {0U, 0U, 0U};
@@ -79,6 +80,7 @@ static ws2812b_pixel_t ws2812b_gradient_color(uint16_t hue)
     return color;
 }
 
+/** @brief Append eight PWM compare values, most-significant bit first; advance index. */
 static void ws2812b_encode_byte(uint8_t data, uint32_t *buffer, uint16_t *index)
 {
     uint8_t mask;
@@ -244,6 +246,7 @@ void ws2812b_all_off(void)
     ws2812b_show();
 }
 
+/** @brief HAL completion hook: stop this LED transfer, hold data low and release its buffer. */
 void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
 {
     if ((htim->Instance == TIM2) && (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_3))

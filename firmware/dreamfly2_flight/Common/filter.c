@@ -30,7 +30,7 @@ void filter_moving_average(float data, float *filtered_data, uint8_t window_size
     {
         for (uint8_t index = 0U;
              index < FILTER_MOVING_AVERAGE_MAX_WINDOW_SIZE;
-             ++index)
+             index++)
         {
             s_buffer[index] = 0.0f;
         }

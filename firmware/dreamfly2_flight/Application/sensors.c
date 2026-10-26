@@ -32,11 +32,12 @@
 #define IMU_GYRO_FILTER_FACTOR 0.85f
 
 static sensors_status_t s_status;
-static float s_accel_bias[3];
-static float s_gyro_bias[3];
+static float s_accel_bias[3]; /* XYZ offsets in g; horizontal calibration preserves +1 g on Z. */
+static float s_gyro_bias[3]; /* XYZ zero-rate offsets in degrees/s, stored in RAM only. */
 static filter_kalman_1d_t s_accel_filter[3];
 static filter_low_pass_t s_gyro_filter[3];
 
+/** @brief Test per-axis gyro magnitude and inter-sample change; inputs must be valid. */
 static bool imu_is_still(const icm20948_t *sample,
                          const float last_gyro[3])
 {
@@ -46,7 +47,7 @@ static bool imu_is_still(const icm20948_t *sample,
         sample->gyro_z_dps
     };
 
-    for (uint8_t axis = 0U; axis < 3U; ++axis)
+    for (uint8_t axis = 0U; axis < 3U; axis++)
     {
         float delta = gyro[axis] - last_gyro[axis];
 
@@ -62,6 +63,7 @@ static bool imu_is_still(const icm20948_t *sample,
     return true;
 }
 
+/** @brief Seed each axis filter with a bias-corrected sample to avoid a zero startup transient. */
 static void imu_init_filters(const icm20948_t *sample)
 {
     float accel[3] = {
@@ -75,7 +77,7 @@ static void imu_init_filters(const icm20948_t *sample)
         sample->gyro_z_dps - s_gyro_bias[2]
     };
 
-    for (uint8_t axis = 0U; axis < 3U; ++axis)
+    for (uint8_t axis = 0U; axis < 3U; axis++)
     {
         filter_kalman_1d_init(&s_accel_filter[axis],
                               IMU_ACCEL_FILTER_PROCESS_NOISE,
@@ -88,6 +90,11 @@ static void imu_init_filters(const icm20948_t *sample)
     }
 }
 
+/**
+ * @brief Average consecutive stationary gyro samples and initialize the filters.
+ * @return false on an IMU read failure.
+ * @note Uses RTOS delays; movement restarts accumulation with no overall timeout.
+ */
 static bool imu_calibrate(void)
 {
     icm20948_t sample;
@@ -126,7 +133,7 @@ static bool imu_calibrate(void)
         osDelay(IMU_CALIBRATION_INTERVAL_TICKS);
     }
 
-    for (uint8_t axis = 0U; axis < 3U; ++axis)
+    for (uint8_t axis = 0U; axis < 3U; axis++)
     {
         s_gyro_bias[axis] = gyro_sum[axis]
                             / (float)IMU_CALIBRATION_SAMPLES;
@@ -241,7 +248,7 @@ bool sensors_read_imu(sensors_imu_t *imu_data)
     gyro[1] = sample.gyro_y_dps - s_gyro_bias[1];
     gyro[2] = sample.gyro_z_dps - s_gyro_bias[2];
 
-    for (uint8_t axis = 0U; axis < 3U; ++axis)
+    for (uint8_t axis = 0U; axis < 3U; axis++)
     {
         accel[axis] = filter_kalman_1d(&s_accel_filter[axis], accel[axis]);
         gyro[axis] = filter_low_pass(&s_gyro_filter[axis], gyro[axis]);

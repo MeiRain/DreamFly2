@@ -11,7 +11,7 @@
 /**
  * @brief Set the status LED to its default off state.
  *
- * The GPIO clock and output mode must already be configured by CubeMX.
+ * @note The GPIO clock and output mode must already be configured by CubeMX.
  */
 void led_init(void);
 

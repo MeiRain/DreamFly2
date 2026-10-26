@@ -12,7 +12,9 @@
  * @brief Read, filter and convert the battery voltage.
  *
  * @return Filtered battery voltage in volts.
- * ADC1 must already be initialized by CubeMX before this function is called.
+ * @note ADC1 must be initialized first. Uses polling with a 1 ms timeout argument;
+ *       ADC status is not reported to the caller. Call from one task only because
+ *       the moving-average filter keeps one shared window.
  */
 float battery_read_voltage(void);
 

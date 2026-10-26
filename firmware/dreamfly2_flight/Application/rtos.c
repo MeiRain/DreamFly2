@@ -7,14 +7,19 @@
 
 #include "rtos.h"
 
+#include <math.h>
+
 #include "cmsis_os2.h"
 
 #include "attitude.h"
 #include "flight.h"
 #include "sensors.h"
+#include "si24r1.h"
+#include "stm32f4xx_hal.h"
 
 #include "debug.h"
 
+/* Periods use kernel ticks; the fixed 0.002 s algorithm period assumes a 1 kHz tick. */
 #define FLIGHT_CONTROL_TASK_PERIOD_TICKS 2U
 #define FLIGHT_SYSTEM_TASK_PERIOD_TICKS 10U
 #define FLIGHT_SENSOR_TASK_PERIOD_TICKS 2U
@@ -23,7 +28,17 @@
 #define FLIGHT_LED_PERIOD_CYCLES 50U
 #define FLIGHT_SLOW_SENSOR_PERIOD_CYCLES 5U
 #define FLIGHT_ATTITUDE_PERIOD_S 0.002f
+#define FLIGHT_LINK_TIMEOUT_MS 300U
+#define FLIGHT_ATTITUDE_TIMEOUT_MS 100U
+#define FLIGHT_BATTERY_PERIOD_CYCLES 10U
+#define FLIGHT_BATTERY_TIMEOUT_MS 500U
+/* Select USART1 RC verification; USART2 attitude telemetry remains enabled. */
+#define FLIGHT_DEBUG_REMOTE_ENABLED 1U
 
+/* Private snapshots exchanged by these tasks; validity flags mean "received at
+ * least once", not "fresh now". Scheduler locks prevent task-level copy races,
+ * but do not exclude interrupts. No ISR may write these snapshots.
+ */
 static sensors_imu_t s_latest_imu;
 static sensors_mag_t s_latest_mag;
 static sensors_baro_t s_latest_baro;
@@ -39,12 +54,33 @@ static bool s_latest_attitude_6axis_valid;
 static bool s_latest_attitude_9axis_valid;
 static flight_axis_t s_latest_rate_output;
 static bool s_latest_rate_output_valid;
-static bool s_imu_pending_control;
+static bool s_imu_pending_control; /* One fresh IMU sample is waiting for the rate loop. */
+
+/* The link task is the sole radio owner; the debug task copies these under lock. */
+static rcprotocol_control_t s_latest_remote;
+static uint32_t s_remote_received_count;
+static uint32_t s_remote_last_ms;
+static bool s_radio_ready;
+static uint32_t s_attitude_last_ms; /* Timestamp of the latest successful six-axis solve. */
+static uint16_t s_battery_cv;       /* System-task sample, rounded to 0.01 V; 0 unavailable. */
+static uint32_t s_battery_last_ms;
+
+/** @brief Encode degrees in 0.01-degree units, reserving INT16_MIN for unavailable data. */
+static int16_t flight_angle_cdeg(float angle_deg)
+{
+    if (!isfinite(angle_deg) || angle_deg < -327.67f || angle_deg > 327.67f)
+    {
+        return RCPROTOCOL_INVALID_I16;
+    }
+    float value = angle_deg * 100.0f;
+    return (int16_t)(value >= 0.0f ? value + 0.5f : value - 0.5f);
+}
 
 void flight_system_task_entry(void *argument)
 {
     uint32_t next_wake_tick;
     uint16_t led_count = 0U;
+    uint8_t battery_count = 0U;
 
     (void)argument;
 
@@ -52,6 +88,23 @@ void flight_system_task_entry(void *argument)
 
     for (;;)
     {
+        if (battery_count == 0U)
+        {
+            float voltage_v = flight_update_battery();
+            uint16_t voltage_cv = isfinite(voltage_v)
+                && voltage_v > 0.0f && voltage_v <= 655.35f
+                ? (uint16_t)(voltage_v * 100.0f + 0.5f) : 0U;
+            (void)osKernelLock();
+            s_battery_cv = voltage_cv;
+            s_battery_last_ms = HAL_GetTick();
+            (void)osKernelUnlock();
+        }
+        battery_count++;
+        if (battery_count >= FLIGHT_BATTERY_PERIOD_CYCLES)
+        {
+            battery_count = 0U;
+        }
+
         ++led_count;
         if (led_count >= FLIGHT_LED_PERIOD_CYCLES)
         {
@@ -127,8 +180,11 @@ void flight_sensor_task_entry(void *argument)
     {
         s_accel_calibrated = sensors_calibrate_accel_level();
     }
-    s_sensor_status = sensors_get_status();
+    sensors_status_t sensor_status = sensors_get_status();
+    (void)osKernelLock();
+    s_sensor_status = sensor_status;
     s_sensor_status_valid = true;
+    (void)osKernelUnlock();
     next_wake_tick = osKernelGetTickCount();
 
     for (;;)
@@ -162,8 +218,11 @@ void flight_sensor_task_entry(void *argument)
                                      FLIGHT_ATTITUDE_PERIOD_S,
                                      &attitude))
             {
+                (void)osKernelLock();
                 s_latest_attitude_6axis = attitude;
                 s_latest_attitude_6axis_valid = true;
+                s_attitude_last_ms = HAL_GetTick();
+                (void)osKernelUnlock();
             }
         }
 
@@ -228,6 +287,10 @@ void flight_debug_task_entry(void *argument)
     bool attitude_6axis_valid;
     bool attitude_9axis_valid;
     bool status_reported = false;
+    rcprotocol_control_t remote;
+    uint32_t remote_received_count;
+    uint32_t remote_last_ms;
+    bool radio_ready;
 
     (void)argument;
 
@@ -251,9 +314,27 @@ void flight_debug_task_entry(void *argument)
         attitude_9axis_valid = s_latest_attitude_9axis_valid;
         rate_output = s_latest_rate_output;
         rate_output_valid = s_latest_rate_output_valid;
+        remote = s_latest_remote;
+        remote_received_count = s_remote_received_count;
+        remote_last_ms = s_remote_last_ms;
+        radio_ready = s_radio_ready;
         (void)osKernelUnlock();
 
-        if (status_valid && !status_reported)
+        /* USART2 telemetry is independent of the rotating USART1 text pages. */
+        if (attitude_6axis_valid)
+        {
+            (void)debug_send_attitude(attitude_6axis.roll_deg,
+                                      attitude_6axis.pitch_deg,
+                                      attitude_6axis.yaw_deg);
+        }
+
+        if (FLIGHT_DEBUG_REMOTE_ENABLED)
+        {
+            bool connected = radio_ready && remote_received_count != 0U
+                && (uint32_t)(HAL_GetTick() - remote_last_ms) < FLIGHT_LINK_TIMEOUT_MS;
+            debug_print_remote(radio_ready, connected, remote_received_count, &remote);
+        }
+        else if (status_valid && !status_reported)
         {
             debug_printf("sensors: imu=%u acc_cal=%u mag=%u baro=%u\r\n",
                          (unsigned int)status.imu,
@@ -314,14 +395,140 @@ void flight_debug_task_entry(void *argument)
 void flight_link_task_entry(void *argument)
 {
     uint32_t next_wake_tick;
+    rcprotocol_control_t control = {0};
+    uint32_t received_count = 0U;
+    uint32_t last_receive_ms = 0U;
+    uint8_t status_sequence = 0U;
+    bool have_control = false;
+    bool radio_ready;
 
     (void)argument;
 
+    radio_ready = si24r1_init(SI24R1_MODE_RX);
+    (void)osKernelLock();
+    s_radio_ready = radio_ready;
+    (void)osKernelUnlock();
     next_wake_tick = osKernelGetTickCount();
 
     for (;;)
     {
+        if (radio_ready)
+        {
+            /* Drain the hardware's three-entry FIFO without waiting for a packet. */
+            for (uint8_t i = 0U; i < 3U; i++)
+            {
+                uint8_t buffer[SI24R1_MAX_PAYLOAD_SIZE];
+                uint8_t size;
+                rcprotocol_control_t incoming;
+                if (!si24r1_receive(buffer, sizeof(buffer), &size))
+                {
+                    break;
+                }
+                if (!rcprotocol_parse_control(buffer, size, &incoming))
+                {
+                    continue;
+                }
+
+                uint32_t now = HAL_GetTick();
+                if (have_control && incoming.sequence == control.sequence
+                    && (uint32_t)(now - last_receive_ms) < FLIGHT_LINK_TIMEOUT_MS)
+                {
+                    continue;
+                }
+                control = incoming;
+                have_control = true;
+                last_receive_ms = now;
+                received_count++;
+                (void)osKernelLock();
+                s_latest_remote = control;
+                s_remote_last_ms = last_receive_ms;
+                s_remote_received_count = received_count;
+                (void)osKernelUnlock();
+            }
+
+            if (have_control)
+            {
+                /* Copy published data only; no ADC/I2C acquisition in the link task. */
+                attitude_t attitude;
+                sensors_status_t sensor_status;
+                bool attitude_valid;
+                bool sensor_status_valid;
+                uint32_t attitude_last_ms;
+                uint32_t battery_last_ms;
+                uint16_t battery_cv;
+                (void)osKernelLock();
+                attitude = s_latest_attitude_6axis;
+                attitude_valid = s_latest_attitude_6axis_valid;
+                attitude_last_ms = s_attitude_last_ms;
+                sensor_status = s_sensor_status;
+                sensor_status_valid = s_sensor_status_valid;
+                battery_cv = s_battery_cv;
+                battery_last_ms = s_battery_last_ms;
+                (void)osKernelUnlock();
+
+                uint32_t now = HAL_GetTick();
+                attitude_valid = attitude_valid
+                    && (uint32_t)(now - attitude_last_ms) < FLIGHT_ATTITUDE_TIMEOUT_MS;
+                rcprotocol_status_t status = {
+                    .sequence = status_sequence,
+                    .roll_cdeg = RCPROTOCOL_INVALID_I16,
+                    .pitch_cdeg = RCPROTOCOL_INVALID_I16,
+                    .yaw_cdeg = RCPROTOCOL_INVALID_I16,
+                    .throttle = control.throttle,
+                    .height_cm = RCPROTOCOL_INVALID_I16,
+                    .battery_cv = (uint32_t)(now - battery_last_ms)
+                        < FLIGHT_BATTERY_TIMEOUT_MS ? battery_cv : 0U
+                };
+                if (attitude_valid)
+                {
+                    status.roll_cdeg = flight_angle_cdeg(attitude.roll_deg);
+                    status.pitch_cdeg = flight_angle_cdeg(attitude.pitch_deg);
+                    /* The solver already emits yaw in -180..180 degrees. */
+                    status.yaw_cdeg = flight_angle_cdeg(attitude.yaw_deg);
+                }
+                if (!attitude_valid || status.roll_cdeg == RCPROTOCOL_INVALID_I16
+                    || status.pitch_cdeg == RCPROTOCOL_INVALID_I16
+                    || status.yaw_cdeg == RCPROTOCOL_INVALID_I16
+                    || !sensor_status_valid || !sensor_status.imu)
+                {
+                    status.sensor_errors |= RCPROTOCOL_SENSOR_ERROR_IMU;
+                }
+                /* MAG/BARO bits report configured onboard sensor initialization.
+                 * Unconnected FLOW/RANGE modules are not marked as failed.
+                 */
+                if (sensor_status_valid && !sensor_status.magnetometer)
+                {
+                    status.sensor_errors |= RCPROTOCOL_SENSOR_ERROR_MAG;
+                }
+                if (sensor_status_valid && !sensor_status.barometer)
+                {
+                    status.sensor_errors |= RCPROTOCOL_SENSOR_ERROR_BARO;
+                }
+                /* Arming/mode control and height estimation remain unconnected.
+                 * No armed flag is asserted in the current motor-free bench loop.
+                 * ACK data belongs to a future packet, not a command confirmation.
+                 */
+                uint8_t buffer[RCPROTOCOL_STATUS_FRAME_SIZE];
+                uint8_t size = rcprotocol_pack_status(&status, buffer, sizeof(buffer));
+                if (size != 0U && si24r1_write_ack_payload(buffer, size))
+                {
+                    status_sequence++;
+                }
+            }
+
+            /* In RX mode this reads only the driver's transport-fault latch. */
+            radio_ready = si24r1_get_tx_result() != SI24R1_TX_ERROR;
+            (void)osKernelLock();
+            s_radio_ready = radio_ready;
+            (void)osKernelUnlock();
+        }
+
         next_wake_tick += FLIGHT_LINK_TASK_PERIOD_TICKS;
+        uint32_t now_tick = osKernelGetTickCount();
+        if ((int32_t)(next_wake_tick - now_tick) <= 0)
+        {
+            next_wake_tick = now_tick + FLIGHT_LINK_TASK_PERIOD_TICKS;
+        }
         osDelayUntil(next_wake_tick);
     }
 }

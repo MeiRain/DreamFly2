@@ -29,15 +29,17 @@ static pid_t s_pitch_pid;
 static pid_t s_yaw_pid;
 static flight_status_t s_flight_status = FLIGHT_STATUS_WAIT_PAIRING;
 static flight_sensor_t s_sensor_error = FLIGHT_SENSOR_NONE;
-static uint8_t s_error_flash_count;
+static uint8_t s_error_flash_count; /* RGB update calls since the last visibility change. */
 static uint8_t s_error_visible = 1U;
 
+/** @brief Buffer one RGB color for all LEDs and request a DMA transfer. */
 static void flight_rgb_all(uint8_t red, uint8_t green, uint8_t blue)
 {
     ws2812b_set_all(red, green, blue);
     ws2812b_show();
 }
 
+/** @brief Show steady red on the configured left LEDs and green on the right. */
 static void flight_show_flying_rgb(void)
 {
     ws2812b_set_pixel(FLIGHT_LEFT_LED_1, FLIGHT_RGB_BRIGHTNESS, 0U, 0U);
@@ -47,6 +49,7 @@ static void flight_show_flying_rgb(void)
     ws2812b_show();
 }
 
+/** @brief Show the active fault color; toggle visibility after a fixed number of calls. */
 static void flight_show_sensor_error(void)
 {
     if (s_error_visible == 0U)

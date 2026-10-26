@@ -15,8 +15,10 @@
 #define ICM20948_ACC_LSB_PER_G 8192.0f
 #define ICM20948_GYRO_LSB_PER_DPS 16.4f
 
+/* Cached bank selection; all register access must remain serialized. */
 static uint8_t s_current_bank = ICM20948_INVALID_BANK;
 
+/** @brief Write one byte in the currently selected bank using blocking I2C. */
 static bool icm20948_write_register(uint8_t register_address, uint8_t value)
 {
     return HAL_I2C_Mem_Write(&hi2c1,
@@ -28,6 +30,7 @@ static bool icm20948_write_register(uint8_t register_address, uint8_t value)
                              ICM20948_I2C_TIMEOUT_MS) == HAL_OK;
 }
 
+/** @brief Read one byte in the currently selected bank; value must be writable. */
 static bool icm20948_read_register(uint8_t register_address, uint8_t *value)
 {
     return HAL_I2C_Mem_Read(&hi2c1,
@@ -39,6 +42,7 @@ static bool icm20948_read_register(uint8_t register_address, uint8_t *value)
                             ICM20948_I2C_TIMEOUT_MS) == HAL_OK;
 }
 
+/** @brief Read consecutive registers into a buffer with at least size bytes. */
 static bool icm20948_read_registers(uint8_t register_address,
                                     uint8_t *data,
                                     uint16_t size)
@@ -52,6 +56,7 @@ static bool icm20948_read_registers(uint8_t register_address,
                             ICM20948_I2C_TIMEOUT_MS) == HAL_OK;
 }
 
+/** @brief Select a register bank, updating the cache only after a successful write. */
 static bool icm20948_select_bank(uint8_t bank)
 {
     if (bank == s_current_bank)

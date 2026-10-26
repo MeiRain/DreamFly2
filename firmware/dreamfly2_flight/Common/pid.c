@@ -10,6 +10,7 @@
 #include <stddef.h>
 #include <math.h>
 
+/** @brief Clamp a value symmetrically to +/-limit; limit must be nonnegative. */
 static float pid_limit(float value, float limit)
 {
     if (value > limit)
