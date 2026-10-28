@@ -63,6 +63,7 @@ typedef struct
     uint8_t keys;             /**< Caller-supplied held-key bits 0..5; not button event codes. */
     uint8_t last_tx_sequence; /**< Last successfully started control frame's sequence. */
     joystick_t joystick;     /**< Valid only while input_valid is true. */
+    uint16_t battery_cv;     /**< Remote-controller battery in 0.01 V; 0 unavailable. */
     rcprotocol_status_t flight; /**< Cached protocol units; valid only while is_connected. */
     remote_page_t page;       /**< Local UI state, not sent to the flight controller. */
     remote_notice_t notice;   /**< Temporary feedback for rejected/unimplemented actions. */
@@ -90,6 +91,16 @@ bool remote_init(void);
  *       All remote/joystick/radio APIs must be serialized in this same context.
  */
 void remote_process(void);
+
+/**
+ * @brief Service TX completion and drain up to three received ACK payloads.
+ * @note Call from the same task as remote_process(), on a radio IRQ notification.
+ *       Never call from the GPIO ISR. Does not scan inputs, advance calibration
+ *       or start a control transmission. remote_process() also calls this every
+ *       5 ms as a missed-IRQ/timeout fallback. Refresh snapshots afterward with
+ *       remote_get_state(). Uses bounded blocking SPI transfers in task context.
+ */
+void remote_process_radio(void);
 
 /**
  * @brief Handle one button scan, page changes and a manual calibration request.

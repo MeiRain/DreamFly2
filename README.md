@@ -80,9 +80,23 @@ DreamFly2 是一个基于 STM32F411、HAL 和 FreeRTOS 实现的微型四轴飞�
 | [软件结构](docs/architecture.md) | 模块分层、依赖关系与数据处理原则 |
 | [C 代码规范](docs/coding_style.md) | 命名、变量作用域、函数传值、头文件引用与注释 |
 | [姿态解算](docs/attitude.md) | 新旧实现对比、运动修正条件与上位机方向映射 |
+| [Flash 参数保存](docs/flash.md) | 参数区预留、构建配置、加载与保存 |
+| [匿名上位机在线调参](docs/ano_parameters.md) | UART2/WiFi 连接、姿态增益读写、恢复默认与保存 |
 | [遥控通信协议](docs/remote_protocol.md) | 控制包、状态包、字段单位与 ACK 约定 |
 | [SI24R1 驱动](docs/si24r1.md) | 无线驱动接口与通信流程 |
 | [开发与协作](docs/development.md) | 开发路线、分工与提交协作方式 |
+
+## Flash 参数区配置
+
+飞控使用末尾 128 KB（扇区 7）保存参数。在 `firmware/dreamfly2_flight/STM32F411xx_FLASH.ld` 的 `MEMORY` 中，将 Flash 的 `LENGTH = 512K` 改为 `384K`，RAM 配置不变：
+
+```ld
+FLASH (rx) : ORIGIN = 0x08000000, LENGTH = 384K
+```
+
+同时在飞控 `CMakeLists.txt` 的 `target_sources()` 中加入 `Core/Src/flash.c`。修改后重新构建。
+
+`flight_init()` 自动加载参数；匿名上位机现已接入四个姿态解算增益的读取、修改、恢复默认和保存命令，支持 UART2 串口或 WiFi 双向透传。修改先在 RAM 生效，明确执行保存才写入 Flash；修改和保存要求飞控已上锁。UART2 报文读写、保存及掉电加载已通过实机验证；匿名上位机界面和 WiFi 透传尚待验证。详见 [在线调参](docs/ano_parameters.md) 和 [Flash 参数保存](docs/flash.md)。
 
 ## 项目状态
 

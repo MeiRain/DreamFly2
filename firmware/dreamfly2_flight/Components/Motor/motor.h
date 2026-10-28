@@ -10,6 +10,9 @@
 
 #include <stdint.h>
 
+/* Maximum timer compare request, shared by the mixer and output clamp. */
+#define MOTOR_PWM_MAX 900
+
 typedef struct
 {
     /* Timer compare counts, clamped to 0..900; not a percentage or an RPM value.

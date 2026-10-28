@@ -26,9 +26,20 @@ typedef struct
 } attitude_t;
 
 /**
+ * @brief Set independent Mahony PI gains and clear accumulated correction errors.
+ * @return false for negative or nonfinite gains; existing gains stay unchanged.
+ * @note Call before attitude_init(). Later changes must be serialized with both
+ *       solvers in their owner task. This preserves orientation; it does not
+ *       perform sensor calibration or persist data.
+ */
+bool attitude_set_gains(float six_axis_kp, float six_axis_ki,
+                        float nine_axis_kp, float nine_axis_ki);
+
+/**
  * @brief Initialize both attitude quaternions from acceleration.
  * @param acc_g Acceleration in g; NULL or a near-zero vector initializes level.
- * @note Resets both solutions and their correction integrals; initial yaw is zero.
+ * @note Set gains first with attitude_set_gains(). This resets both solutions
+ *       and their correction integrals; initial yaw is zero. Gains are retained.
  */
 void attitude_init(const attitude_vector_t *acc_g);
 

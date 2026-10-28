@@ -1,0 +1,300 @@
+{
+  "selection": "Movement summaries use intended-sign samples with main gyro axis >5 dps and other axes <35% of it; return and handling motions remain in the raw log. Receive timestamps are host-side, not MCU sample timestamps.",
+  "stages": {
+    "roll_right": {
+      "total_valid": 4779,
+      "selected": 91,
+      "gyro_mean_dps": [
+        21.575,
+        -0.973,
+        -0.322
+      ],
+      "motor_preview_mean": [
+        522.3,
+        520.98,
+        477.09,
+        479.68
+      ],
+      "representative": [
+        {
+          "t": 54.585,
+          "utc": "2026-10-28T09:11:39.239474+00:00",
+          "stage": "roll_right",
+          "line": "rate: G=70.7,-23.9,-13.1 U=-70.0,24.5,10.5 M=0584,0556,0395,0465 valid=1",
+          "g": [
+            70.7,
+            -23.9,
+            -13.1
+          ],
+          "u": [
+            -70.0,
+            24.5,
+            10.5
+          ],
+          "valid": 1,
+          "motors": [
+            584,
+            556,
+            395,
+            465
+          ]
+        },
+        {
+          "t": 54.686,
+          "utc": "2026-10-28T09:11:39.340749+00:00",
+          "stage": "roll_right",
+          "line": "rate: G=63.6,-15.9,-1.8 U=-65.1,16.5,2.4 M=0579,0551,0416,0454 valid=1",
+          "g": [
+            63.6,
+            -15.9,
+            -1.8
+          ],
+          "u": [
+            -65.1,
+            16.5,
+            2.4
+          ],
+          "valid": 1,
+          "motors": [
+            579,
+            551,
+            416,
+            454
+          ]
+        },
+        {
+          "t": 53.964,
+          "utc": "2026-10-28T09:11:38.618653+00:00",
+          "stage": "roll_right",
+          "line": "rate: G=52.4,-3.0,-6.1 U=-52.0,3.8,7.2 M=0549,0555,0437,0459 valid=1",
+          "g": [
+            52.4,
+            -3.0,
+            -6.1
+          ],
+          "u": [
+            -52.0,
+            3.8,
+            7.2
+          ],
+          "valid": 1,
+          "motors": [
+            549,
+            555,
+            437,
+            459
+          ]
+        }
+      ]
+    },
+    "pitch_down": {
+      "total_valid": 5208,
+      "selected": 135,
+      "gyro_mean_dps": [
+        0.459,
+        11.137,
+        -0.993
+      ],
+      "motor_preview_mean": [
+        488.45,
+        512.52,
+        509.63,
+        489.45
+      ],
+      "representative": [
+        {
+          "t": 219.016,
+          "utc": "2026-10-28T09:14:23.670644+00:00",
+          "stage": "pitch_down",
+          "line": "rate: G=2.3,35.1,-7.6 U=-2.3,-34.8,7.9 M=0460,0545,0525,0471 valid=1",
+          "g": [
+            2.3,
+            35.1,
+            -7.6
+          ],
+          "u": [
+            -2.3,
+            -34.8,
+            7.9
+          ],
+          "valid": 1,
+          "motors": [
+            460,
+            545,
+            525,
+            471
+          ]
+        },
+        {
+          "t": 219.531,
+          "utc": "2026-10-28T09:14:24.184971+00:00",
+          "stage": "pitch_down",
+          "line": "rate: G=1.0,24.9,-4.3 U=-0.8,-24.8,3.6 M=0472,0529,0520,0478 valid=1",
+          "g": [
+            1.0,
+            24.9,
+            -4.3
+          ],
+          "u": [
+            -0.8,
+            -24.8,
+            3.6
+          ],
+          "valid": 1,
+          "motors": [
+            472,
+            529,
+            520,
+            478
+          ]
+        },
+        {
+          "t": 147.708,
+          "utc": "2026-10-28T09:13:12.361884+00:00",
+          "stage": "pitch_down",
+          "line": "rate: G=1.8,22.0,-4.4 U=-1.9,-21.7,4.3 M=0476,0528,0515,0481 valid=1",
+          "g": [
+            1.8,
+            22.0,
+            -4.4
+          ],
+          "u": [
+            -1.9,
+            -21.7,
+            4.3
+          ],
+          "valid": 1,
+          "motors": [
+            476,
+            528,
+            515,
+            481
+          ]
+        }
+      ]
+    },
+    "yaw_clockwise": {
+      "total_valid": 2083,
+      "selected": 104,
+      "gyro_mean_dps": [
+        0.153,
+        -0.112,
+        -37.775
+      ],
+      "motor_preview_mean": [
+        462.58,
+        537.38,
+        462.22,
+        537.78
+      ],
+      "representative": [
+        {
+          "t": 262.781,
+          "utc": "2026-10-28T09:15:07.435183+00:00",
+          "stage": "yaw_clockwise",
+          "line": "rate: G=-9.7,-4.9,-98.0 U=9.7,4.9,96.9 M=0398,0582,0408,0611 valid=1",
+          "g": [
+            -9.7,
+            -4.9,
+            -98.0
+          ],
+          "u": [
+            9.7,
+            4.9,
+            96.9
+          ],
+          "valid": 1,
+          "motors": [
+            398,
+            582,
+            408,
+            611
+          ]
+        },
+        {
+          "t": 262.573,
+          "utc": "2026-10-28T09:15:07.227301+00:00",
+          "stage": "yaw_clockwise",
+          "line": "rate: G=22.4,14.1,-85.6 U=-18.3,-12.0,75.3 M=0431,0606,0418,0545 valid=1",
+          "g": [
+            22.4,
+            14.1,
+            -85.6
+          ],
+          "u": [
+            -18.3,
+            -12.0,
+            75.3
+          ],
+          "valid": 1,
+          "motors": [
+            431,
+            606,
+            418,
+            545
+          ]
+        },
+        {
+          "t": 262.883,
+          "utc": "2026-10-28T09:15:07.536994+00:00",
+          "stage": "yaw_clockwise",
+          "line": "rate: G=25.3,-4.6,-82.8 U=-24.6,4.0,82.9 M=0446,0604,0389,0562 valid=1",
+          "g": [
+            25.3,
+            -4.6,
+            -82.8
+          ],
+          "u": [
+            -24.6,
+            4.0,
+            82.9
+          ],
+          "valid": 1,
+          "motors": [
+            446,
+            604,
+            389,
+            562
+          ]
+        }
+      ]
+    },
+    "baseline": {
+      "last_samples": 250,
+      "gyro_mean_dps": [
+        0.039,
+        -0.019,
+        0.065
+      ],
+      "motor_preview_mean": [
+        500.0,
+        500,
+        500.0,
+        500.0
+      ]
+    },
+    "hold_end": {
+      "last_samples": 250,
+      "gyro_mean_dps": [
+        0.054,
+        -0.026,
+        0.084
+      ],
+      "motor_preview_mean": [
+        500.01,
+        500.0,
+        500,
+        500
+      ]
+    }
+  },
+  "total_lines": 19501,
+  "invalid_lines": 84,
+  "restored_params": "No parameter writes or motor commands were sent; all acquisition was read-only.",
+  "reception_notes": [
+    "The first serial session disconnected with Device not configured; acquisition was reopened.",
+    "83 unavailable candidate lines occurred during preparation; the first line after reopening was partial/garbled and excluded.",
+    "All parsed rows in roll_right, pitch_down, yaw_clockwise and hold_end had valid=1.",
+    "No MCU timestamp is present in UART1 lines; host reception timestamps may be batched. No angle integral or precise timing claim is made."
+  ]
+}

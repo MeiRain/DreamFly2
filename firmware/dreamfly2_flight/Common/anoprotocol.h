@@ -9,6 +9,44 @@
 
 #include <stdint.h>
 
+#define ANOPROTOCOL_SOURCE_ADDRESS 0x66U
+#define ANOPROTOCOL_DESTINATION_ADDRESS 0xFEU
+#define ANOPROTOCOL_BROADCAST_ADDRESS 0xFFU
+#define ANOPROTOCOL_MAX_FRAME_SIZE 128U
+
+#define ANOPROTOCOL_PARAM_COMMAND 0xE0U
+#define ANOPROTOCOL_PARAM_VALUE 0xE1U
+#define ANOPROTOCOL_PARAM_INFO 0xE2U
+#define ANOPROTOCOL_DEVICE_INFO 0xE3U
+#define ANOPROTOCOL_PARAM_GET_DEVICE 0x00U
+#define ANOPROTOCOL_PARAM_GET_COUNT 0x01U
+#define ANOPROTOCOL_PARAM_GET_VALUE 0x02U
+#define ANOPROTOCOL_PARAM_GET_INFO 0x03U
+#define ANOPROTOCOL_PARAM_SUBCOMMAND 0x10U
+#define ANOPROTOCOL_PARAM_RESET 0x00AAU
+#define ANOPROTOCOL_PARAM_SAVE 0x00ABU
+
+typedef struct
+{
+    uint8_t source;
+    uint8_t destination;
+    uint8_t id;
+    uint16_t length;
+    const uint8_t *data; /* View into caller buffer, valid until that buffer changes. */
+    uint8_t sc;
+    uint8_t ac;
+} anoprotocol_frame_t;
+
+/**
+ * @brief Validate the first frame in an accumulated byte stream.
+ * @return Positive frame length on success, 0 if incomplete, -1 if invalid.
+ * @note On -1 discard one byte and retry; on success consume the returned length.
+ *       Trailing frames are allowed. Output stays unchanged on incomplete/invalid
+ *       input. Payload is a view into buffer. Both checksums include the AB header.
+ */
+int16_t anoprotocol_parse_frame(const uint8_t *buffer, uint16_t size,
+                               anoprotocol_frame_t *frame);
+
 /*
  * All values must already be encoded in the protocol's units and scale.
  * Caller owns the output buffer; payload and output must not overlap.

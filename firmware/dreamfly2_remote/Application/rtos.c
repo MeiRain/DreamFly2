@@ -15,13 +15,26 @@
 #include "cmsis_os2.h"
 #include "oled.h"
 #include "remote.h"
+#include "stm32f1xx_hal.h"
 
 /* CubeMX currently configures a 1 kHz kernel tick: one tick equals one ms. */
 #define RTOS_CONTROL_PERIOD_TICKS 5U
 #define RTOS_DISPLAY_PERIOD_TICKS 100U
+#define RTOS_RADIO_IRQ_FLAG 0x01U
 
 /* Created once by the higher-priority control task before display can run. */
 static osMessageQueueId_t s_display_queue;
+/* Bound before radio initialization, after the scheduler has started. */
+static osThreadId_t volatile s_control_thread;
+
+/** @brief Forward PB3 radio IRQ to its owner; never access SPI in the ISR. */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    if (GPIO_Pin == GPIO_PIN_3 && s_control_thread != NULL)
+    {
+        (void)osThreadFlagsSet(s_control_thread, RTOS_RADIO_IRQ_FLAG);
+    }
+}
 
 /** @brief Keep an absolute period; skip missed deadlines instead of busy catch-up. */
 static void rtos_delay_until(uint32_t *next_tick, uint32_t period_ticks)
@@ -56,21 +69,47 @@ void remote_control_task_entry(void *argument)
     (void)argument;
     remote_state_t data = {0};
 
+    s_control_thread = osThreadGetId();
     s_display_queue = osMessageQueueNew(1U, sizeof(data), NULL);
     button_init();
     (void)remote_init();
     uint32_t next_tick = osKernelGetTickCount();
 
+    bool radio_event = false;
     for (;;)
     {
-        button_result_t buttons;
-        button_scan(&buttons);
-        remote_handle_buttons(&buttons);
-        remote_process();
-        remote_get_state(&data);
+        uint32_t now = osKernelGetTickCount();
+        if ((int32_t)(now - next_tick) >= 0)
+        {
+            button_result_t buttons;
+            button_scan(&buttons);
+            remote_handle_buttons(&buttons);
+            remote_process();
+            remote_get_state(&data);
+            rtos_publish_display(&data);
 
-        rtos_publish_display(&data);
-        rtos_delay_until(&next_tick, RTOS_CONTROL_PERIOD_TICKS);
+            next_tick += RTOS_CONTROL_PERIOD_TICKS;
+            now = osKernelGetTickCount();
+            if ((int32_t)(next_tick - now) <= 0)
+            {
+                next_tick = now + RTOS_CONTROL_PERIOD_TICKS;
+            }
+        }
+        else if (radio_event)
+        {
+            /* Extra IRQ wakeups service only radio data, preserving the 5 ms
+             * button/input/calibration cadence and the 10 ms TX schedule.
+             */
+            remote_process_radio();
+            remote_get_state(&data);
+            rtos_publish_display(&data);
+        }
+
+        now = osKernelGetTickCount();
+        uint32_t timeout = (int32_t)(next_tick - now) > 0 ? next_tick - now : 1U;
+        uint32_t flags = osThreadFlagsWait(RTOS_RADIO_IRQ_FLAG, osFlagsWaitAny, timeout);
+        radio_event = (flags & osFlagsError) == 0U
+            && (flags & RTOS_RADIO_IRQ_FLAG) != 0U;
     }
 }
 

@@ -64,11 +64,14 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Common/rcprotocol.c
         Common/attitude.c
         Common/pid.c
+        Common/height.c
 
         Application/debug.c
         Application/flight.c
         Application/rtos.c
         Application/sensors.c
+
+        Core/Src/flash.c
 )
 
 # Add include paths

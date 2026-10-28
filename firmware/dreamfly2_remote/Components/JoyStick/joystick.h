@@ -56,10 +56,19 @@ bool joystick_init(void);
  *       deadband (+/-10 RC units, output 1500) -> 1000..2000 clamp.
  *       Larger ADC values produce larger RC values. Nominal endpoints remain
  *       0/4095; measured endpoint calibration is not implemented.
- *       Rank 1 is battery and is not converted by this joystick interface.
+ *       Rank 1 is battery; its cached raw value is available separately.
  *       Throttle meaning, arming, UI and communication belong to the application.
  */
 bool joystick_read(joystick_t *channels);
+
+/**
+ * @brief Return the battery ADC count cached from the last consumed five-rank scan.
+ * @return Raw 0..4095 value; 0 before a frame is consumed or after a driver fault.
+ * @note Same owning task as joystick_read/calibrate. Does not start/stop ADC or
+ *       consume a scan; voltage conversion, filtering and freshness belong to
+ *       the application. Battery input is ADC rank 1 (PA0).
+ */
+uint16_t joystick_get_battery_adc(void);
 
 /**
  * @brief Start/advance mechanical-center calibration by at most one fresh scan.

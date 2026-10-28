@@ -19,8 +19,6 @@
 #include <math.h>
 #include <stddef.h>
 
-#define ATTITUDE_KP 0.2f
-#define ATTITUDE_KI 0.1f
 #define ATTITUDE_DEG_TO_RAD 0.01745329252f
 #define ATTITUDE_RAD_TO_DEG 57.29577951f
 #define ATTITUDE_MIN_NORM 0.001f
@@ -43,6 +41,34 @@ typedef struct
 /* Independent states allow the flight and demonstration solutions to run together. */
 static attitude_state_t s_6axis_state = {.q0 = 1.0f};
 static attitude_state_t s_9axis_state = {.q0 = 1.0f};
+
+/* Supplied by the application before attitude_init(); never read Flash here. */
+static float s_6axis_kp;
+static float s_6axis_ki;
+static float s_9axis_kp;
+static float s_9axis_ki;
+
+bool attitude_set_gains(float six_axis_kp, float six_axis_ki,
+                        float nine_axis_kp, float nine_axis_ki)
+{
+    if (!isfinite(six_axis_kp) || !isfinite(six_axis_ki)
+        || !isfinite(nine_axis_kp) || !isfinite(nine_axis_ki)
+        || six_axis_kp < 0.0f || six_axis_ki < 0.0f
+        || nine_axis_kp < 0.0f || nine_axis_ki < 0.0f)
+    {
+        return false;
+    }
+
+    s_6axis_kp = six_axis_kp;
+    s_6axis_ki = six_axis_ki;
+    s_9axis_kp = nine_axis_kp;
+    s_9axis_ki = nine_axis_ki;
+    /* Retain orientation but discard correction history learned with old gains. */
+    s_6axis_state.ex_int = s_6axis_state.ey_int = s_6axis_state.ez_int = 0.0f;
+    s_9axis_state.ex_int = s_9axis_state.ey_int = s_9axis_state.ez_int = 0.0f;
+    return true;
+}
+
 
 /**
  * @brief Integrate corrected angular rates in rad/s over dt seconds, normalize
@@ -220,15 +246,15 @@ bool attitude_solve_6axis(const attitude_vector_t *acc_g,
             s_6axis_state.ez_int += ez * dt;
         }
 
-        gx += ATTITUDE_KP * ex;
-        gy += ATTITUDE_KP * ey;
-        gz += ATTITUDE_KP * ez;
+        gx += s_6axis_kp * ex;
+        gy += s_6axis_kp * ey;
+        gz += s_6axis_kp * ez;
     }
 
     /* Retain the previously learned correction while gravity is unreliable. */
-    gx += ATTITUDE_KI * s_6axis_state.ex_int;
-    gy += ATTITUDE_KI * s_6axis_state.ey_int;
-    gz += ATTITUDE_KI * s_6axis_state.ez_int;
+    gx += s_6axis_ki * s_6axis_state.ex_int;
+    gy += s_6axis_ki * s_6axis_state.ey_int;
+    gz += s_6axis_ki * s_6axis_state.ez_int;
 
     return attitude_update(&s_6axis_state, gx, gy, gz, dt, attitude_deg);
 }
@@ -350,9 +376,9 @@ bool attitude_solve_9axis(const attitude_vector_t *acc_g,
     s_9axis_state.ey_int += ey * dt;
     s_9axis_state.ez_int += ez * dt;
 
-    gx += ATTITUDE_KP * ex + ATTITUDE_KI * s_9axis_state.ex_int;
-    gy += ATTITUDE_KP * ey + ATTITUDE_KI * s_9axis_state.ey_int;
-    gz += ATTITUDE_KP * ez + ATTITUDE_KI * s_9axis_state.ez_int;
+    gx += s_9axis_kp * ex + s_9axis_ki * s_9axis_state.ex_int;
+    gy += s_9axis_kp * ey + s_9axis_ki * s_9axis_state.ey_int;
+    gz += s_9axis_kp * ez + s_9axis_ki * s_9axis_state.ez_int;
 
     return attitude_update(&s_9axis_state, gx, gy, gz, dt, attitude_deg);
 }

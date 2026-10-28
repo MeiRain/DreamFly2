@@ -10,7 +10,6 @@
 #include "tim.h"
 
 #define MOTOR_PWM_MIN 0
-#define MOTOR_PWM_MAX 900
 
 /** @brief Clamp a requested timer compare value to the configured motor limits. */
 static uint16_t motor_limit(int16_t pwm)

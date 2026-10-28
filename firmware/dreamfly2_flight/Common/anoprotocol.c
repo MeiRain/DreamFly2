@@ -10,8 +10,6 @@
 #include <string.h>
 
 #define ANOPROTOCOL_HEADER 0xABU
-#define ANOPROTOCOL_SOURCE_ADDRESS 0x66U
-#define ANOPROTOCOL_DESTINATION_ADDRESS 0xFEU
 #define ANOPROTOCOL_FRAME_OVERHEAD 8U
 
 /** @brief Encode a 16-bit value low byte first; data must have two writable bytes. */
@@ -28,6 +26,58 @@ static void anoprotocol_write_u32(uint8_t *data, uint32_t value)
     data[1] = (uint8_t)(value >> 8);
     data[2] = (uint8_t)(value >> 16);
     data[3] = (uint8_t)(value >> 24);
+}
+
+int16_t anoprotocol_parse_frame(const uint8_t *buffer, uint16_t size,
+                               anoprotocol_frame_t *frame)
+{
+    if (buffer == NULL || frame == NULL)
+    {
+        return -1;
+    }
+    if (size == 0U)
+    {
+        return 0;
+    }
+    if (buffer[0] != ANOPROTOCOL_HEADER)
+    {
+        return -1;
+    }
+    if (size < 6U)
+    {
+        return 0;
+    }
+    uint16_t payload_size = (uint16_t)buffer[4] | ((uint16_t)buffer[5] << 8U);
+    if (payload_size > ANOPROTOCOL_MAX_FRAME_SIZE - ANOPROTOCOL_FRAME_OVERHEAD)
+    {
+        return -1;
+    }
+    uint16_t frame_size = payload_size + ANOPROTOCOL_FRAME_OVERHEAD;
+    if (size < frame_size)
+    {
+        return 0;
+    }
+    uint8_t sc = 0U;
+    uint8_t ac = 0U;
+    for (uint16_t i = 0U; i < payload_size + 6U; i++)
+    {
+        sc += buffer[i];
+        ac += sc;
+    }
+    if (sc != buffer[frame_size - 2U] || ac != buffer[frame_size - 1U])
+    {
+        return -1;
+    }
+    *frame = (anoprotocol_frame_t){
+        .source = buffer[1],
+        .destination = buffer[2],
+        .id = buffer[3],
+        .length = payload_size,
+        .data = &buffer[6],
+        .sc = sc,
+        .ac = ac
+    };
+    return (int16_t)frame_size;
 }
 
 uint16_t anoprotocol_pack_frame(uint8_t source, uint8_t destination, uint8_t id,

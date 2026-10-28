@@ -9,7 +9,7 @@
 #define DREAMFLY2_REMOTE_APPLICATION_RTOS_H
 
 /**
- * @brief Initialize buttons and remote processing; scan/service them every 5 ms.
+ * @brief Scan inputs every 5 ms and service radio IRQ notifications between scans.
  * @param argument Unused CubeMX task argument.
  * @note Strong replacement for the generated weak entry. Requires a 1 kHz tick,
  *       Normal priority and at least the configured 256-word starting stack.
@@ -17,7 +17,8 @@
  *       add another joystick reader or radio caller. Handles local key/menu
  *       actions and sends controls every 10 ms. Calibration collects at most
  *       one sample per loop, only after explicit DISARMED user confirmation.
- *       Arming, mode switching and automatic flight are not connected yet.
+ *       PB3 EXTI wakes this task through a thread flag; ISR performs no SPI.
+ *       Mode switching and automatic flight are not connected yet.
  */
 void remote_control_task_entry(void *argument);
 

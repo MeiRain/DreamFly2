@@ -11,19 +11,31 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "rcprotocol.h"
+#include "flight.h"
+
+/** @brief Start UART2 normal RX DMA with IDLE events; call once from flight_init(). */
+bool debug_init(void);
 
 /**
- * @brief Print a received RC snapshot through USART1 DMA.
- * @param radio_ready Whether the flight radio is initialized without a transport fault.
- * @param connected Whether a valid control frame arrived within the last 300 ms.
- * @param received_count Total accepted control frames since task startup.
- * @param control Last accepted channels; required only when connected is true.
- * @note Call every 100 ms from the same task as debug_printf(). Stale channels
- *       are not printed as live input. This function does not receive UART data.
+ * @brief Read queued UART2 bytes without waiting; restart RX after errors when possible.
+ * @return Byte count, 0 if empty, -1 after a transport error/overflow (queue flushed).
+ * @note Only the debug task consumes bytes. On -1 reset the protocol accumulator.
+ *       ISR callbacks only queue bytes; no parsing, parameter changes or Flash work.
  */
-void debug_print_remote(bool radio_ready, bool connected, uint32_t received_count,
-                        const rcprotocol_control_t *control);
+int16_t debug_receive(uint8_t *data, uint16_t capacity);
+
+/**
+ * @brief Send one USART1 rate/motor-preview line and USART2 attitude from a snapshot.
+ * @param data Stable application snapshot; NULL is ignored.
+ * @note Call from the sole debug task every 20 ticks after flight_init().
+ *       G is XYZ angular rate (deg/s); U is R/P/Y PID correction (PWM counts);
+ *       M is mixed candidate PWM; O is the last M1..M4 command sent to the driver,
+ *       not measured RPM. run=1 means the gated rate bench path is driving motors.
+ *       Invalid candidates use dashes; unavailable rate data reports readiness
+ *       flags and the last output command.
+ *       No sensor acquisition, flight-state changes or motor writes occur here.
+ */
+void debug_report(const flight_data_t *data);
 
 /**
  * @brief Format and send one debug message through USART1 DMA.

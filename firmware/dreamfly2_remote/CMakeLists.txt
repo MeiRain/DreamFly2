@@ -54,6 +54,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         Application/remote.c
         Common/rcprotocol.c
         Components/NRF24L01/nrf24l01.c
+        Components/WS2812B/ws2812b.c
 )
 
 # Add include paths
@@ -65,6 +66,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         Common
         Application
         Components/NRF24L01
+        Components/WS2812B
 )
 
 # Add project symbols (macros)

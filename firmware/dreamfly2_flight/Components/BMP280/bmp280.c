@@ -191,7 +191,10 @@ uint8_t bmp280_read_id(void)
 bool bmp280_init(void)
 {
     uint8_t status;
+    uint8_t readback;
     uint8_t elapsed_ms = 0U;
+    const uint8_t config = T_SB_0_5_MS | FILTER_COEFF_4 | SPI3W_DISABLE;
+    const uint8_t ctrl_meas = OSRS_T_X2 | OSRS_P_X16 | NORMAL_MODE;
 
     if ((bmp280_read_id() != BMP280_DEVID)
         || !bmp280_write_register(RESET_REG, BMP280_RESET_VALUE))
@@ -223,14 +226,15 @@ bool bmp280_init(void)
         return false;
     }
 
-    if (!bmp280_write_register(CONFIG,
-                               T_SB_0_5_MS
-                               | FILTER_COEFF_16
-                               | SPI3W_DISABLE)
-        || !bmp280_write_register(CTRL_MEAS,
-                                  OSRS_T_X1
-                                  | OSRS_P_X4
-                                  | NORMAL_MODE))
+    if (!bmp280_write_register(CONFIG, config)
+        || !bmp280_write_register(CTRL_MEAS, ctrl_meas))
+    {
+        return false;
+    }
+
+    /* Reject a successful bus transaction if the requested settings did not stick. */
+    if (!bmp280_read_register(CONFIG, &readback) || readback != config
+        || !bmp280_read_register(CTRL_MEAS, &readback) || readback != ctrl_meas)
     {
         return false;
     }

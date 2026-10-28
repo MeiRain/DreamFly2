@@ -28,6 +28,7 @@
 static _Alignas(uint32_t) volatile uint16_t s_adc_values[JOYSTICK_ADC_COUNT];
 static volatile bool s_sample_ready;
 static bool s_is_initialized;
+static uint16_t s_battery_adc; /**< Battery rank copied with the last consumed DMA frame. */
 
 /* Axis order is roll, pitch, yaw, throttle. All four sticks self-center. */
 static uint16_t s_center_adc[JOYSTICK_AXIS_COUNT] = {2048U, 2048U, 2048U, 2048U};
@@ -77,6 +78,7 @@ static bool joystick_read_adc(uint16_t values[JOYSTICK_AXIS_COUNT])
         return false;
     }
 
+    s_battery_adc = s_adc_values[0];
     for (uint8_t i = 0U; i < JOYSTICK_AXIS_COUNT; i++)
     {
         values[i] = s_adc_values[i + 1U];
@@ -133,6 +135,7 @@ bool joystick_init(void)
     s_calibration.active = false;
     s_sample_ready = false;
     s_is_initialized = false;
+    s_battery_adc = 0U;
     joystick_reset_filters();
 
     if ((hadc1.DMA_Handle == NULL)
@@ -183,6 +186,11 @@ bool joystick_read(joystick_t *channels)
     };
     *channels = sample;
     return true;
+}
+
+uint16_t joystick_get_battery_adc(void)
+{
+    return s_is_initialized ? s_battery_adc : 0U;
 }
 
 joystick_calibration_result_t joystick_calibrate(void)
