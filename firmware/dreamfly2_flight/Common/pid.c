@@ -68,6 +68,7 @@ void pid_calculate(pid_t *pid,
                     bool integral_enabled)
 {
     float derivative;
+    float previous_integral;
 
     if (pid == NULL)
     {
@@ -86,7 +87,8 @@ void pid_calculate(pid_t *pid,
     pid->error = pid->target - pid->measurement;
     derivative = (pid->error - pid->previous_error) / sample_time_s;
 
-    if (integral_enabled)
+    previous_integral = pid->integral;
+    if (integral_enabled && pid->ki != 0.0f)
     {
         if ((pid->integral_threshold == 0.0f)
             || (fabsf(pid->error) < pid->integral_threshold))
@@ -103,6 +105,17 @@ void pid_calculate(pid_t *pid,
     pid->output = pid->kp * pid->error
              + pid->ki * pid->integral
              + pid->kd * derivative;
+    /* Reject accumulation that pushes this PID farther into its own output
+     * limit. Motor-mixer saturation needs separate feedback from the allocator.
+     */
+    if (integral_enabled && pid->ki != 0.0f
+        && ((pid->output > pid->output_limit && pid->ki * pid->error > 0.0f)
+            || (pid->output < -pid->output_limit && pid->ki * pid->error < 0.0f)))
+    {
+        pid->integral = previous_integral;
+        pid->output = pid->kp * pid->error
+            + pid->ki * pid->integral + pid->kd * derivative;
+    }
     pid->previous_error = pid->error;
 
     pid->output = pid_limit(pid->output, pid->output_limit);

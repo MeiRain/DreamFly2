@@ -11,6 +11,9 @@
 #include "icm20948_reg.h"
 
 #define ICM20948_I2C_TIMEOUT_MS 2U
+#define ICM20948_POWER_ON_DELAY_MS 100U
+#define ICM20948_RESET_DELAY_MS 100U
+#define ICM20948_SENSOR_SETTLE_MS 50U
 #define ICM20948_AUX_TRANSFER_DELAY_MS 1U
 #define ICM20948_ACC_LSB_PER_G 8192.0f
 #define ICM20948_GYRO_LSB_PER_DPS 16.4f
@@ -88,6 +91,10 @@ uint8_t icm20948_read_id(void)
 
 bool icm20948_init(void)
 {
+    /* DS-000189: register access can require 100 ms after power-up.
+     * A download delays startup incidentally; a normal cold boot does not.
+     */
+    HAL_Delay(ICM20948_POWER_ON_DELAY_MS);
     s_current_bank = ICM20948_INVALID_BANK;
 
     if (!icm20948_select_bank(USER_BANK_0)
@@ -96,7 +103,7 @@ bool icm20948_init(void)
         return false;
     }
 
-    HAL_Delay(100U);
+    HAL_Delay(ICM20948_RESET_DELAY_MS);
     s_current_bank = ICM20948_INVALID_BANK;
 
     if (icm20948_read_id() != ICM20948_DEVID)
@@ -132,6 +139,10 @@ bool icm20948_init(void)
         return false;
     }
 
+    /* Gyro wake-up is typically 35 ms; allow settling after configuration
+     * before the application starts collecting zero-rate calibration samples.
+     */
+    HAL_Delay(ICM20948_SENSOR_SETTLE_MS);
     return true;
 }
 

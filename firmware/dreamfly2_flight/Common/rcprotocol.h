@@ -33,13 +33,13 @@ typedef struct
     uint16_t roll; /* All four channels: 1000..2000; centered axes: 1500. */
     uint16_t pitch;
     uint16_t yaw;
-    uint16_t throttle;
+    uint16_t throttle; /* Non-centering throttle: bottom 1000, top 2000. */
     uint8_t keys; /* Bits 0..5: current debounced states of keys 1..6. */
 } rcprotocol_control_t;
 
 typedef struct
 {
-    uint8_t sequence;
+    uint8_t sequence; /* Advance for each newly generated status; duplicates are stale. */
     uint8_t flags; /* Bit 0: armed; 1: low battery; 2: altitude hold; 3: position hold.
                    * Multiple bits may be set; bits 4..7 are reserved and must be zero.
                    */

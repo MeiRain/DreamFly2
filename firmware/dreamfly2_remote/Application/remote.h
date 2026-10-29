@@ -45,7 +45,7 @@ typedef enum
     REMOTE_CALIBRATION_IDLE = 0,
     REMOTE_CALIBRATION_PENDING,
     REMOTE_CALIBRATION_RUNNING,
-    REMOTE_CALIBRATION_SUCCESS, /**< RAM centers changed; application may save them once. */
+    REMOTE_CALIBRATION_SUCCESS, /**< RAM calibration changed; application may save them once. */
     REMOTE_CALIBRATION_FAILED,
     REMOTE_CALIBRATION_REJECTED /**< No fresh disarmed status, invalid input or radio fault. */
 } remote_calibration_state_t;
@@ -74,7 +74,7 @@ typedef struct
  * @return true if both initialized; inspect remote_get_state() for individual results.
  * @note Call after CubeMX GPIO/DMA/ADC1/SPI1 initialization. Radio startup blocks
  *       for about 102 ms. Creates no tasks and makes no GPIO/OLED configuration changes.
- *       Load saved joystick centers through joystick_set_calibration() if needed.
+ *       Load saved joystick calibration through joystick_set_calibration() if needed.
  */
 bool remote_init(void);
 
@@ -108,7 +108,8 @@ void remote_process_radio(void);
  * @note Call every 5 ms from the same task as remote_process(), after scanning.
  *       Short SW2 (KEY1/right) switches the two pages. Long SW2 on the main page
  *       opens the joystick page; long SW2 there requests calibration after the
- *       user centers all four axes. SW4 (KEY2/left) returns to the main page.
+ *       user centers roll/pitch/yaw and lowers throttle fully. SW4 (KEY2/left)
+ *       returns to the main page.
  *       On the main page only, SW4 mode/takeoff/landing actions show placeholders.
  *       Calibration requires fresh DISARMED feedback and changes RAM only.
  *       Direction keys stay local on the joystick page and must be released
@@ -136,9 +137,9 @@ void remote_draw_page(const remote_state_t *state);
 bool remote_set_keys(uint8_t keys);
 
 /**
- * @brief Queue a manual four-axis center-calibration request.
+ * @brief Queue a manual three-axis center and throttle-low calibration request.
  * @return true if queued; false if safety prerequisites are not met or busy.
- * @note Call only in response to explicit user confirmation with sticks centered.
+ * @note Call after explicit confirmation: roll/pitch/yaw centered, throttle fully down.
  *       The next remote_process() rechecks fresh DISARMED feedback before running.
  *       No flash write is performed. After a SUCCESS transition, the application
  *       may export joystick_get_calibration() and save the record once.

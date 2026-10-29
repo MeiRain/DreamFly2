@@ -1,6 +1,6 @@
 /**
  * @file joystick.c
- * @brief Independent joystick acquisition, averaging and center calibration.
+ * @brief Independent joystick acquisition, averaging and neutral/low calibration.
  * @author 梅雨
  * @date 2026-10-24
  */
@@ -21,6 +21,7 @@
 #define JOYSTICK_CALIBRATION_TIMEOUT_MS    1000U
 #define JOYSTICK_CENTER_MIN_ADC            1024U
 #define JOYSTICK_CENTER_MAX_ADC            3072U
+#define JOYSTICK_THROTTLE_MIN_MAX_ADC      1024U
 
 /* DMA ranks: battery, roll, pitch, yaw, throttle.
  * HAL takes uint32_t*, but the configured transfer width is halfword.
@@ -30,8 +31,8 @@ static volatile bool s_sample_ready;
 static bool s_is_initialized;
 static uint16_t s_battery_adc; /**< Battery rank copied with the last consumed DMA frame. */
 
-/* Axis order is roll, pitch, yaw, throttle. All four sticks self-center. */
-static uint16_t s_center_adc[JOYSTICK_AXIS_COUNT] = {2048U, 2048U, 2048U, 2048U};
+/* Roll/pitch/yaw centers, then the non-centering throttle minimum. */
+static uint16_t s_calibration_adc[JOYSTICK_AXIS_COUNT] = {2048U, 2048U, 2048U, 0U};
 static filter_moving_average_t s_filters[JOYSTICK_AXIS_COUNT];
 
 /* One bounded calibration attempt, advanced by the owning task's 5 ms calls. */
@@ -130,6 +131,24 @@ static uint16_t joystick_convert_axis(uint16_t raw, uint16_t center)
     return (uint16_t)value;
 }
 
+/** @brief Map non-centering throttle from its measured minimum; no middle deadband. */
+static uint16_t joystick_convert_throttle(uint16_t raw, uint16_t minimum)
+{
+    if (raw <= minimum)
+    {
+        return 1000U;
+    }
+
+    int32_t value = (int32_t)(raw - minimum) * 1000 / (JOYSTICK_ADC_MAX - minimum);
+    if (value <= JOYSTICK_RC_DEADBAND)
+    {
+        return 1000U;
+    }
+    value = (value - JOYSTICK_RC_DEADBAND) * 1000 / (1000 - JOYSTICK_RC_DEADBAND);
+    if (value > 1000) { value = 1000; }
+    return (uint16_t)(1000 + value);
+}
+
 bool joystick_init(void)
 {
     s_calibration.active = false;
@@ -175,7 +194,9 @@ bool joystick_read(joystick_t *channels)
     for (uint8_t i = 0U; i < JOYSTICK_AXIS_COUNT; i++)
     {
         float mean = filter_moving_average(&s_filters[i], raw[i]);
-        values[i] = joystick_convert_axis((uint16_t)(mean + 0.5f), s_center_adc[i]);
+        uint16_t adc = (uint16_t)(mean + 0.5f);
+        values[i] = i < 3U ? joystick_convert_axis(adc, s_calibration_adc[i])
+            : joystick_convert_throttle(adc, s_calibration_adc[i]);
     }
 
     joystick_t sample = {
@@ -253,7 +274,8 @@ joystick_calibration_result_t joystick_calibrate(void)
 
     for (uint8_t i = 0U; i < JOYSTICK_AXIS_COUNT; i++)
     {
-        if ((raw[i] < JOYSTICK_CENTER_MIN_ADC) || (raw[i] > JOYSTICK_CENTER_MAX_ADC))
+        if ((i < 3U && (raw[i] < JOYSTICK_CENTER_MIN_ADC || raw[i] > JOYSTICK_CENTER_MAX_ADC))
+            || (i == 3U && raw[i] > JOYSTICK_THROTTLE_MIN_MAX_ADC))
         {
             s_calibration.active = false;
             return JOYSTICK_CALIBRATION_FAILED;
@@ -272,7 +294,7 @@ joystick_calibration_result_t joystick_calibrate(void)
         .roll_center_adc = (uint16_t)((s_calibration.sum[0] + count / 2U) / count),
         .pitch_center_adc = (uint16_t)((s_calibration.sum[1] + count / 2U) / count),
         .yaw_center_adc = (uint16_t)((s_calibration.sum[2] + count / 2U) / count),
-        .throttle_center_adc = (uint16_t)((s_calibration.sum[3] + count / 2U) / count)
+        .throttle_min_adc = (uint16_t)((s_calibration.sum[3] + count / 2U) / count)
     };
     s_calibration.active = false;
     return joystick_set_calibration(&calibration)
@@ -286,16 +308,17 @@ bool joystick_set_calibration(const joystick_calibration_t *calibration)
         return false;
     }
 
-    const uint16_t centers[JOYSTICK_AXIS_COUNT] = {
+    const uint16_t values[JOYSTICK_AXIS_COUNT] = {
         calibration->roll_center_adc,
         calibration->pitch_center_adc,
         calibration->yaw_center_adc,
-        calibration->throttle_center_adc
+        calibration->throttle_min_adc
     };
 
     for (uint8_t i = 0U; i < JOYSTICK_AXIS_COUNT; i++)
     {
-        if ((centers[i] < JOYSTICK_CENTER_MIN_ADC) || (centers[i] > JOYSTICK_CENTER_MAX_ADC))
+        if ((i < 3U && (values[i] < JOYSTICK_CENTER_MIN_ADC || values[i] > JOYSTICK_CENTER_MAX_ADC))
+            || (i == 3U && values[i] > JOYSTICK_THROTTLE_MIN_MAX_ADC))
         {
             return false;
         }
@@ -303,7 +326,7 @@ bool joystick_set_calibration(const joystick_calibration_t *calibration)
 
     for (uint8_t i = 0U; i < JOYSTICK_AXIS_COUNT; i++)
     {
-        s_center_adc[i] = centers[i];
+        s_calibration_adc[i] = values[i];
     }
     joystick_reset_filters();
     return true;
@@ -316,10 +339,10 @@ void joystick_get_calibration(joystick_calibration_t *calibration)
         return;
     }
 
-    calibration->roll_center_adc = s_center_adc[0];
-    calibration->pitch_center_adc = s_center_adc[1];
-    calibration->yaw_center_adc = s_center_adc[2];
-    calibration->throttle_center_adc = s_center_adc[3];
+    calibration->roll_center_adc = s_calibration_adc[0];
+    calibration->pitch_center_adc = s_calibration_adc[1];
+    calibration->yaw_center_adc = s_calibration_adc[2];
+    calibration->throttle_min_adc = s_calibration_adc[3];
 }
 
 /** @brief Mark an ADC1 scan complete; all processing stays in the caller's task. */

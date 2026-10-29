@@ -54,7 +54,9 @@ void pid_reset(pid_t *pid);
  *          Outside integral_threshold, the existing integral is retained without accumulation.
  * @param sample_time_s Controller period in seconds.
  * @param integral_enabled Enable integral accumulation when true.
- * @note Disabling integration clears the integral. Invalid period or limits set
+ * @note Disabling integration or setting ki=0 clears the integral. Accumulation
+ *       that drives farther into this PID output limit is rejected; motor mixing
+ *       saturation is not included. Invalid period or limits set
  *       output to zero. Target and measurement must use the same unit.
  */
 void pid_calculate(pid_t *pid,

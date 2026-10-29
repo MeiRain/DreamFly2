@@ -24,7 +24,9 @@ typedef struct
 /**
  * @brief Reset and configure the ICM-20948 for +/-4 g and +/-2000 degrees/s.
  * @return true on success, false on an ID mismatch or I2C failure.
- * @note I2C1 must be initialized first. Uses blocking reset/startup delays.
+ * @note I2C1 must be initialized first. Waits 100 ms before the first register
+ *       access, 100 ms after reset and 50 ms after configuration for settling.
+ *       Uses blocking startup delays; never call from the periodic control loop.
  *       This driver and its auxiliary bus access must be serialized by the caller.
  */
 bool icm20948_init(void);

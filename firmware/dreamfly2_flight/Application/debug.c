@@ -16,7 +16,7 @@
 #include "usart.h"
 #include "anoprotocol.h"
 
-#define DEBUG_TX_BUFFER_SIZE 128U
+#define DEBUG_TX_BUFFER_SIZE 192U
 
 static char s_debug_tx_buffer[DEBUG_TX_BUFFER_SIZE];
 static uint8_t s_telemetry_tx_buffer[DEBUG_TX_BUFFER_SIZE];
@@ -205,8 +205,9 @@ void debug_report(const flight_data_t *data)
         && (uint32_t)(now - data->remote_last_ms) < FLIGHT_LINK_TIMEOUT_MS;
     if (!imu_ready || !data->acc_calibrated || !data->rate_output_valid)
     {
-        debug_printf("rate: INVALID imu=%u cal=%u rc=%u age=%lu O=%04d,%04d,%04d,%04d run=0\r\n",
-                     (unsigned)imu_ready, (unsigned)data->acc_calibrated, (unsigned)connected,
+        /* boot: IMU setup and gyro calibration succeeded; cal: level ACC calibration. */
+        debug_printf("rate: INVALID boot=%u imu=%u cal=%u rc=%u age=%lu O=%04d,%04d,%04d,%04d run=0\r\n",
+                     (unsigned)data->sensor_status.imu, (unsigned)imu_ready, (unsigned)data->acc_calibrated, (unsigned)connected,
                      (unsigned long)(uint32_t)(now - data->rate_last_ms),
                      (int)data->motor_output.pwm1, (int)data->motor_output.pwm2,
                      (int)data->motor_output.pwm3, (int)data->motor_output.pwm4);
@@ -225,7 +226,9 @@ void debug_report(const flight_data_t *data)
     bool running = FLIGHT_RATE_TEST_ENABLED && data->armed && data->takeoff_requested
         && (data->motor_output.pwm1 != 0 || data->motor_output.pwm2 != 0
             || data->motor_output.pwm3 != 0 || data->motor_output.pwm4 != 0);
-    debug_printf("rate: G=%.1f,%.1f,%.1f U=%.1f,%.1f,%.1f M=%s O=%04d,%04d,%04d,%04d run=%u valid=%u\r\n",
+    debug_printf("rate: S=%.1f,%.1f,%.1f G=%.1f,%.1f,%.1f U=%.1f,%.1f,%.1f M=%s O=%04d,%04d,%04d,%04d run=%u valid=%u\r\n",
+                 data->rate_target_dps.roll, data->rate_target_dps.pitch,
+                 data->rate_target_dps.yaw,
                  data->sensors.imu.gyro_x_dps, data->sensors.imu.gyro_y_dps,
                  data->sensors.imu.gyro_z_dps,
                  data->rate_output.roll, data->rate_output.pitch, data->rate_output.yaw,

@@ -10,12 +10,12 @@
 
 #include <stdint.h>
 
-/* Maximum timer compare request, shared by the mixer and output clamp. */
-#define MOTOR_PWM_MAX 900
+/* TIM3/TIM4 ARR=999: compare 0..1000 gives 0..100% duty in PWM1. */
+#define MOTOR_PWM_MAX 1000
 
 typedef struct
 {
-    /* Timer compare counts, clamped to 0..900; not a percentage or an RPM value.
+    /* Timer compare counts, clamped to 0..1000; not a percentage or an RPM value.
      * Channels: M1 TIM4_CH1, M2 TIM4_CH2, M3 TIM3_CH3, M4 TIM3_CH4.
      */
     int16_t pwm1;

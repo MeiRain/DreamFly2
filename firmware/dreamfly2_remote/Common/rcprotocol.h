@@ -33,7 +33,7 @@ typedef struct
     uint16_t roll; /* All four channels: 1000..2000; centered axes: 1500. */
     uint16_t pitch;
     uint16_t yaw;
-    uint16_t throttle;
+    uint16_t throttle; /* Non-centering throttle: bottom 1000, top 2000. */
     uint8_t keys; /* Bits 0..5: current debounced states of keys 1..6. */
 } rcprotocol_control_t;
 

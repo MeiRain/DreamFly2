@@ -244,7 +244,9 @@ bool remote_init(void)
     s_history_successes = 0U;
     s_blocked_keys = 0U;
 
-    s_state.joystick = (joystick_t){1500U, 1500U, 1500U, 1500U};
+    s_state.joystick = (joystick_t){
+        .roll = 1500U, .pitch = 1500U, .yaw = 1500U, .throttle = 1000U
+    };
     s_state.radio_ready = nrf24l01_init(NRF24L01_MODE_TX);
     s_state.joystick_ready = joystick_init();
     s_last_send_ms = HAL_GetTick();
@@ -685,7 +687,7 @@ void remote_draw_page(const remote_state_t *state)
     if (state->calibration == REMOTE_CALIBRATION_PENDING
         || state->calibration == REMOTE_CALIBRATION_RUNNING)
     {
-        remote_draw_popup("CALIBRATING", "KEEP AXES CENTERED", state->page);
+        remote_draw_popup("CALIBRATING", "RPY MID; T LOW", state->page);
         return;
     }
 
@@ -707,7 +709,7 @@ void remote_draw_page(const remote_state_t *state)
             remote_draw_popup("CAL OK (RAM)", "FLASH NOT SAVED", state->page);
             break;
         case REMOTE_NOTICE_CAL_FAILED:
-            remote_draw_popup("CAL FAILED", "CENTER AND RETRY", state->page);
+            remote_draw_popup("CAL FAILED", "RPY MID; T LOW", state->page);
             break;
         case REMOTE_NOTICE_CAL_REJECTED:
             remote_draw_popup("CAL REJECTED", "CHECK LINK/STATE", state->page);

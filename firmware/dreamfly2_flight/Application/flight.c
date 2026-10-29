@@ -47,25 +47,23 @@
 #define FLIGHT_ARM_SPIN_GAP_MS 300U
 #define FLIGHT_STICK_CENTER_MIN 1450U
 #define FLIGHT_STICK_CENTER_MAX 1550U
-#define FLIGHT_CENTER_HOLD_MS 200U
-#define FLIGHT_TAKEOFF_THROTTLE 1600U
+#define FLIGHT_READY_HOLD_MS 200U
+#define FLIGHT_RUN_THROTTLE 1200U /* STABILIZE: start above the low-stick stop band. */
+#define FLIGHT_CLIMB_THROTTLE 1600U /* Future height modes: push above neutral to request takeoff. */
 #define FLIGHT_MAX_TILT_DEG 20.0f
+#define FLIGHT_MAX_TILT_RATE_DPS 100.0f
 #define FLIGHT_MAX_YAW_RATE_DPS 90.0f
 #define FLIGHT_MAX_CLIMB_RATE_MPS 0.5f
 
-/* Restricted propellers-off motor feedback; unrelated to the mapped flight throttle. */
-#define FLIGHT_RATE_TEST_BASE_PWM 100U
+/* Cascaded attitude/rate control: bounded corrections and sample freshness. */
 #define FLIGHT_RATE_TEST_OUTPUT_LIMIT 20.0f
-#define FLIGHT_RATE_TEST_MAX_PWM 160
 #define FLIGHT_RATE_TEST_TIMEOUT_MS 20U
-
-_Static_assert(FLIGHT_RATE_TEST_MAX_PWM <= MOTOR_PWM_MAX,
-               "Bench limit must not exceed the motor driver limit");
 
 #define FLIGHT_LED_PERIOD_CYCLES 50U
 #define FLIGHT_BATTERY_PERIOD_CYCLES 10U
 #define FLIGHT_ATTITUDE_PERIOD_S 0.002f
 
+#define IMU_INIT_ATTEMPTS 3U
 #define IMU_CALIBRATION_SAMPLES 256U
 #define IMU_CALIBRATION_INTERVAL_TICKS 2U
 #define IMU_STILL_GYRO_DELTA_DPS 0.31f
@@ -186,8 +184,8 @@ typedef enum
 {
     FLIGHT_LOCKED = 0,
     FLIGHT_ARM_INDICATING,
-    FLIGHT_WAIT_CENTER,
-    FLIGHT_CONFIRM_CENTER,
+    FLIGHT_WAIT_READY,
+    FLIGHT_CONFIRM_READY,
     FLIGHT_WAIT_THROTTLE,
     FLIGHT_TAKEOFF_REQUESTED
 } flight_state_t;
@@ -211,7 +209,7 @@ typedef struct
     flight_state_t state; /* One state describes arming and takeoff preparation. */
     flight_gesture_t gesture;
     uint32_t gesture_start_ms; /* Inward-stick hold start tick. */
-    uint32_t state_start_ms; /* Shared start tick for indication or center confirmation. */
+    uint32_t state_start_ms; /* Shared start tick for indication or low-throttle readiness confirmation. */
     uint32_t idle_start_ms; /* Most recent pre-takeoff operator activity. */
     rcprotocol_control_t idle_control; /* Activity baseline; sequence is ignored. */
 } flight_remote_state_t;
@@ -238,6 +236,12 @@ static flight_rgb_state_t s_rgb = {
     .status = FLIGHT_STATUS_WAIT_PAIRING,
     .sensor_error = FLIGHT_SENSOR_NONE
 };
+/* Angle outputs are deg/s; rate outputs are PWM correction counts. */
+static struct
+{
+    pid_t roll;
+    pid_t pitch;
+} s_angle_pid;
 static flight_pid_t s_rate_pid;
 
 /* The 25-call cycle also schedules the magnetometer every five calls. */
@@ -267,7 +271,8 @@ bool flight_map_control(const rcprotocol_control_t *control, flight_mode_t mode,
     flight_target_t mapped = {0};
     mapped.roll_deg = ((float)control->roll - 1500.0f) / 500.0f * FLIGHT_MAX_TILT_DEG;
     mapped.pitch_deg = ((float)control->pitch - 1500.0f) / 500.0f * FLIGHT_MAX_TILT_DEG;
-    mapped.yaw_rate_dps = ((float)control->yaw - 1500.0f) / 500.0f * FLIGHT_MAX_YAW_RATE_DPS;
+    /* In the X-forward/Y-left/Z-up frame, right stick commands negative yaw. */
+    mapped.yaw_rate_dps = (1500.0f - (float)control->yaw) / 500.0f * FLIGHT_MAX_YAW_RATE_DPS;
 
     if (mode == FLIGHT_MODE_STABILIZE)
     {
@@ -307,8 +312,8 @@ static bool flight_channel_moved(uint16_t value, uint16_t reference)
  *       P is nose-down, Y is counterclockwise from above. M1 rear-right and
  *       M3 front-left turn CCW; M2 front-right and M4 rear-left turn CW.
  *       Handheld axis signs were checked; real motor reaction remains unverified.
- *       All corrections use PWM counts; base throttle is 0..1000. Bench output
- *       clamps to 0..160; calculation-only mode retains the driver limit 0..900.
+ *       All corrections use PWM counts; base throttle and mixed outputs use
+ *       0..MOTOR_PWM_MAX. Actual output still requires the state/validity gate.
  * @return false for invalid input or a nonfinite sum; output stays unchanged.
  *         Zero base throttle produces four zeros. Independent clipping may
  *         reduce torque authority; this is not a flight-ready allocator.
@@ -323,7 +328,7 @@ static bool flight_mix_motors(uint16_t throttle_pwm, const flight_axis_t *correc
         return false;
     }
 
-    float maximum = FLIGHT_RATE_TEST_ENABLED ? FLIGHT_RATE_TEST_MAX_PWM : MOTOR_PWM_MAX;
+    float maximum = MOTOR_PWM_MAX;
     float t = (float)throttle_pwm;
     float r = correction->roll;
     float p = correction->pitch;
@@ -358,7 +363,7 @@ static bool flight_mix_motors(uint16_t throttle_pwm, const flight_axis_t *correc
 /**
  * @brief Select all four motor outputs from the flight state and write them once.
  * @note Called by the control task, or while locked before a Flash save.
- *       The arming indication and gated propellers-off rate test are the only
+ *       The arming indication and gated cascaded controller are the only
  *       nonzero sources. candidate must already be mixed and bounded, or NULL.
  */
 static void flight_write_motors(uint32_t now_ms, const motor_t *candidate)
@@ -577,12 +582,21 @@ static bool flight_init_sensors(void)
     s_baro_alt_offset_m = 0.0f;
     s_baro_reference_count = 0U;
 
-    if (!icm20948_init() || !flight_calibrate_gyro())
+    /* Retry only during locked startup; periodic control never reinitializes
+     * sensors or resumes motors after a fault. Each attempt resets the IMU.
+     */
+    for (uint8_t attempt = 0U; attempt < IMU_INIT_ATTEMPTS; attempt++)
+    {
+        if (icm20948_init() && flight_calibrate_gyro())
+        {
+            s_data.sensor_status.imu = true;
+            break;
+        }
+    }
+    if (!s_data.sensor_status.imu)
     {
         return false;
     }
-
-    s_data.sensor_status.imu = true;
     s_data.sensor_status.magnetometer = ak09916_init();
     s_data.sensor_status.barometer = bmp280_init();
 
@@ -1146,11 +1160,13 @@ void flight_init(void)
 
     (void)flight_load_params();
 
-    /* P-only bench demonstration; these gains are not tuned for flight. */
+    /* Initial P-only cascade gains, not a flight tune. Outer limits are deg/s. */
+    pid_init(&s_angle_pid.roll, 3.0f, 0.0f, 0.0f, 10.0f, 50.0f, FLIGHT_MAX_TILT_RATE_DPS);
+    pid_init(&s_angle_pid.pitch, 3.0f, 0.0f, 0.0f, 10.0f, 50.0f, FLIGHT_MAX_TILT_RATE_DPS);
     float rate_limit = FLIGHT_RATE_TEST_ENABLED ? FLIGHT_RATE_TEST_OUTPUT_LIMIT : 100.0f;
-    pid_init(&s_rate_pid.roll, 1.0f, 0.0f, 0.0f, 10.0f, 50.0f, rate_limit);
-    pid_init(&s_rate_pid.pitch, 1.0f, 0.0f, 0.0f, 10.0f, 50.0f, rate_limit);
-    pid_init(&s_rate_pid.yaw, 1.0f, 0.0f, 0.0f, 10.0f, 50.0f, rate_limit);
+    pid_init(&s_rate_pid.roll, 2.0f, 0.0f, 0.0f, 10.0f, 50.0f, rate_limit);
+    pid_init(&s_rate_pid.pitch, 2.0f, 0.0f, 0.0f, 10.0f, 50.0f, rate_limit);
+    pid_init(&s_rate_pid.yaw, 2.0f, 0.0f, 0.0f, 10.0f, 50.0f, rate_limit);
 
     if (flight_init_sensors())
     {
@@ -1207,7 +1223,7 @@ bool flight_process_remote(const rcprotocol_control_t *control,
     /* Only idle on the ground may auto-lock. Packet sequence changes are not
      * operator activity. Never apply this rule after a takeoff request.
      */
-    if (s_remote.state != FLIGHT_WAIT_CENTER && s_remote.state != FLIGHT_CONFIRM_CENTER
+    if (s_remote.state != FLIGHT_WAIT_READY && s_remote.state != FLIGHT_CONFIRM_READY
         && s_remote.state != FLIGHT_WAIT_THROTTLE)
     {
         s_remote.idle_start_ms = now_ms;
@@ -1237,40 +1253,53 @@ bool flight_process_remote(const rcprotocol_control_t *control,
         uint32_t slot_ms = FLIGHT_ARM_SPIN_MS + FLIGHT_ARM_SPIN_GAP_MS;
         if (elapsed_ms >= 3U * slot_ms + FLIGHT_ARM_SPIN_MS)
         {
-            s_remote.state = FLIGHT_WAIT_CENTER;
+            s_remote.state = FLIGHT_WAIT_READY;
         }
     }
 
-    if (s_remote.state == FLIGHT_WAIT_CENTER || s_remote.state == FLIGHT_CONFIRM_CENTER)
+    bool attitude_centered = flight_stick_centered(control->roll)
+        && flight_stick_centered(control->pitch)
+        && flight_stick_centered(control->yaw);
+    if (s_remote.state == FLIGHT_WAIT_READY || s_remote.state == FLIGHT_CONFIRM_READY)
     {
-        bool centered = flight_stick_centered(control->roll)
-            && flight_stick_centered(control->pitch)
-            && flight_stick_centered(control->yaw)
-            && flight_stick_centered(control->throttle);
-        if (!centered)
+        bool ready = attitude_centered && control->throttle <= FLIGHT_STICK_LOW;
+        if (!ready)
         {
-            s_remote.state = FLIGHT_WAIT_CENTER;
+            s_remote.state = FLIGHT_WAIT_READY;
         }
-        else if (s_remote.state == FLIGHT_WAIT_CENTER)
+        else if (s_remote.state == FLIGHT_WAIT_READY)
         {
-            s_remote.state = FLIGHT_CONFIRM_CENTER;
+            s_remote.state = FLIGHT_CONFIRM_READY;
             s_remote.state_start_ms = now_ms;
         }
-        else if ((uint32_t)(now_ms - s_remote.state_start_ms) >= FLIGHT_CENTER_HOLD_MS)
+        else if ((uint32_t)(now_ms - s_remote.state_start_ms) >= FLIGHT_READY_HOLD_MS)
         {
             s_remote.state = FLIGHT_WAIT_THROTTLE;
         }
     }
-    else if (s_remote.state == FLIGHT_WAIT_THROTTLE
-             && control->throttle >= FLIGHT_TAKEOFF_THROTTLE)
+    else if (s_remote.state == FLIGHT_WAIT_THROTTLE)
     {
-        /* The request may authorize a limited bench test, never automatic takeoff. */
-        s_remote.state = FLIGHT_TAKEOFF_REQUESTED;
+        if (!attitude_centered)
+        {
+            /* A new gesture or attitude command cancels the pending start. */
+            s_remote.state = FLIGHT_WAIT_READY;
+        }
+        else
+        {
+            uint16_t start_throttle = FLIGHT_MAPPING_MODE == FLIGHT_MODE_STABILIZE
+                ? FLIGHT_RUN_THROTTLE : FLIGHT_CLIMB_THROTTLE;
+            if (control->throttle >= start_throttle)
+            {
+                /* Runtime permission only; no automatic takeoff controller is connected. */
+                s_remote.state = FLIGHT_TAKEOFF_REQUESTED;
+            }
+        }
     }
     else if (FLIGHT_RATE_TEST_ENABLED && s_remote.state == FLIGHT_TAKEOFF_REQUESTED
-             && control->throttle <= FLIGHT_STICK_CENTER_MAX)
+             && control->throttle <= FLIGHT_STICK_LOW)
     {
-        s_remote.state = FLIGHT_WAIT_CENTER;
+        /* Bench stop only. A descending stick in a future height mode is not a stop command. */
+        s_remote.state = FLIGHT_WAIT_READY;
     }
 
     return s_remote.state != FLIGHT_LOCKED;
@@ -1281,12 +1310,53 @@ bool flight_takeoff_requested(void)
     return s_remote.state == FLIGHT_TAKEOFF_REQUESTED;
 }
 
+/** @brief Clear both angle loops and all three rate loops after stop or invalid data. */
+static void flight_reset_control(void)
+{
+    pid_reset(&s_angle_pid.roll);
+    pid_reset(&s_angle_pid.pitch);
+    pid_reset(&s_rate_pid.roll);
+    pid_reset(&s_rate_pid.pitch);
+    pid_reset(&s_rate_pid.yaw);
+}
+
+void flight_angle_control(const flight_target_t *target,
+                          const attitude_t *measurement_deg,
+                          float sample_time_s,
+                          bool integral_enabled,
+                          flight_axis_t *target_dps)
+{
+    if (target == NULL || measurement_deg == NULL || target_dps == NULL)
+    {
+        return;
+    }
+
+    s_angle_pid.roll.target = target->roll_deg;
+    s_angle_pid.roll.measurement = measurement_deg->roll_deg;
+    pid_calculate(&s_angle_pid.roll, sample_time_s, integral_enabled);
+
+    s_angle_pid.pitch.target = target->pitch_deg;
+    s_angle_pid.pitch.measurement = measurement_deg->pitch_deg;
+    pid_calculate(&s_angle_pid.pitch, sample_time_s, integral_enabled);
+
+    *target_dps = (flight_axis_t){
+        .roll = s_angle_pid.roll.output,
+        .pitch = s_angle_pid.pitch.output,
+        .yaw = target->yaw_rate_dps
+    };
+}
+
 void flight_rate_control(const flight_axis_t *target_dps,
                          const flight_axis_t *measurement_dps,
                          float sample_time_s,
                          bool integral_enabled,
                          flight_axis_t *output)
 {
+    if (target_dps == NULL || measurement_dps == NULL || output == NULL)
+    {
+        return;
+    }
+
     s_rate_pid.roll.target = target_dps->roll;
     s_rate_pid.roll.measurement = measurement_dps->roll;
     pid_calculate(&s_rate_pid.roll, sample_time_s, integral_enabled);
@@ -1478,7 +1548,7 @@ void flight_process_system(void)
 void flight_process_control(void)
 {
     flight_imu_t imu;
-    flight_axis_t target_dps = {0.0f, 0.0f, 0.0f};
+    flight_axis_t target_dps;
     flight_axis_t output;
     bool rate_valid;
     uint32_t rate_last_ms;
@@ -1488,6 +1558,7 @@ void flight_process_control(void)
     imu = s_data.sensors.imu;
     sample_ready = s_data.sensors.imu_pending_control;
     s_data.sensors.imu_pending_control = false;
+    target_dps = s_data.rate_target_dps;
     output = s_data.rate_output;
     rate_valid = s_data.rate_output_valid;
     rate_last_ms = s_data.rate_last_ms;
@@ -1510,38 +1581,50 @@ void flight_process_control(void)
         && isfinite(imu.gyro_x_dps) && isfinite(imu.gyro_y_dps)
         && isfinite(imu.gyro_z_dps);
 
-    if (sample_ready && imu_ready)
-    {
-        flight_axis_t measurement_dps = {imu.gyro_x_dps, imu.gyro_y_dps, imu.gyro_z_dps};
-        /* Zero-rate target only; never feed tilt angles (deg) into this loop (deg/s). */
-        flight_rate_control(&target_dps, &measurement_dps,
-                            FLIGHT_ATTITUDE_PERIOD_S, false, &output);
-        rate_valid = isfinite(output.roll) && isfinite(output.pitch) && isfinite(output.yaw);
-        rate_last_ms = attitude_last_ms;
-    }
-    if (!imu_ready || !rate_valid
-        || (uint32_t)(now - rate_last_ms) >= FLIGHT_RATE_TEST_TIMEOUT_MS)
-    {
-        output = (flight_axis_t){0};
-        rate_valid = false;
-        pid_reset(&s_rate_pid.roll);
-        pid_reset(&s_rate_pid.pitch);
-        pid_reset(&s_rate_pid.yaw);
-    }
-
-    /* A stale rate result must disarm the bench, not merely pause and auto-resume. */
-    bool armed = flight_process_remote(&remote, connected,
-        imu_ready && (!FLIGHT_RATE_TEST_ENABLED || rate_valid), now);
-    bool takeoff_requested = flight_takeoff_requested();
     flight_target_t target = {0};
     bool target_valid = connected
         && flight_map_control(&remote, FLIGHT_MAPPING_MODE, &target);
+    bool control_ready = imu_ready && target_valid
+        && FLIGHT_MAPPING_MODE == FLIGHT_MODE_STABILIZE;
+    bool integral_enabled = FLIGHT_RATE_TEST_ENABLED && control_ready
+        && s_remote.state == FLIGHT_TAKEOFF_REQUESTED
+        && remote.throttle > FLIGHT_STICK_LOW;
+    if (!integral_enabled)
+    {
+        /* Locked/idle previews never accumulate a correction for later startup. */
+        flight_reset_control();
+    }
+
+    if (sample_ready && control_ready)
+    {
+        flight_axis_t measurement_dps = {imu.gyro_x_dps, imu.gyro_y_dps, imu.gyro_z_dps};
+        flight_angle_control(&target, &attitude, FLIGHT_ATTITUDE_PERIOD_S,
+                              integral_enabled, &target_dps);
+        flight_rate_control(&target_dps, &measurement_dps,
+                             FLIGHT_ATTITUDE_PERIOD_S, integral_enabled, &output);
+        rate_valid = isfinite(target_dps.roll) && isfinite(target_dps.pitch)
+            && isfinite(target_dps.yaw)
+            && isfinite(output.roll) && isfinite(output.pitch) && isfinite(output.yaw);
+        rate_last_ms = attitude_last_ms;
+    }
+    if (!control_ready || !rate_valid
+        || (uint32_t)(now - rate_last_ms) >= FLIGHT_RATE_TEST_TIMEOUT_MS)
+    {
+        target_dps = (flight_axis_t){0};
+        output = (flight_axis_t){0};
+        rate_valid = false;
+        flight_reset_control();
+    }
+
+    /* Stale/invalid control results disarm, so recovery never restarts motors. */
+    bool armed = flight_process_remote(&remote, connected,
+        imu_ready && (!FLIGHT_RATE_TEST_ENABLED || rate_valid), now);
+    bool takeoff_requested = flight_takeoff_requested();
     motor_t motor_preview = {0};
     bool motor_preview_valid = false;
     if (rate_valid && target_valid && FLIGHT_MAPPING_MODE == FLIGHT_MODE_STABILIZE)
     {
-        uint16_t base_pwm = FLIGHT_RATE_TEST_ENABLED ? FLIGHT_RATE_TEST_BASE_PWM : target.throttle_pwm;
-        motor_preview_valid = flight_mix_motors(base_pwm, &output, &motor_preview);
+        motor_preview_valid = flight_mix_motors(target.throttle_pwm, &output, &motor_preview);
     }
 
     (void)osKernelLock();
@@ -1549,6 +1632,7 @@ void flight_process_control(void)
     s_data.takeoff_requested = takeoff_requested;
     s_data.target = target;
     s_data.target_valid = target_valid;
+    s_data.rate_target_dps = target_dps;
     s_data.rate_output = output;
     s_data.rate_output_valid = rate_valid;
     s_data.rate_last_ms = rate_last_ms;
@@ -1575,11 +1659,6 @@ void flight_process_sensors(void)
 
     if (s_data.sensor_status.imu && flight_read_imu(&imu))
     {
-        (void)osKernelLock();
-        data->imu = imu;
-        data->imu_valid = true;
-        data->imu_pending_control = true;
-        (void)osKernelUnlock();
         imu_sample_valid = true;
 
         acc_g = (attitude_vector_t){imu.acc_x_g, imu.acc_y_g, imu.acc_z_g};
@@ -1587,13 +1666,26 @@ void flight_process_sensors(void)
         if (attitude_solve_6axis(&acc_g, &gyro_dps, FLIGHT_ATTITUDE_PERIOD_S, &attitude))
         {
             attitude_sample_valid = true;
-            (void)osKernelLock();
-            data->attitude_6axis = attitude;
-            data->attitude_6axis_valid = true;
-            data->attitude_last_ms = HAL_GetTick();
-            (void)osKernelUnlock();
         }
     }
+
+    /* Publish gyro and attitude from the same frame before releasing control.
+     * A failed read/solve invalidates the pair instead of reusing an old angle.
+     */
+    (void)osKernelLock();
+    if (imu_sample_valid)
+    {
+        data->imu = imu;
+    }
+    data->imu_valid = imu_sample_valid;
+    data->attitude_6axis_valid = attitude_sample_valid;
+    data->imu_pending_control = attitude_sample_valid;
+    if (attitude_sample_valid)
+    {
+        data->attitude_6axis = attitude;
+        data->attitude_last_ms = HAL_GetTick();
+    }
+    (void)osKernelUnlock();
 
     s_sensor_count++;
     if (s_sensor_count % FLIGHT_MAG_PERIOD_CYCLES == 0U)

@@ -33,11 +33,12 @@ typedef struct
 
 /**
  * @brief Map validated RC channels to candidate targets for one control mode.
- * @param control RC channels in 1000..2000; centered attitude axes are 1500.
+ * @param control RC channels in 1000..2000; R/P/Y neutral 1500, throttle bottom 1000.
  * @param mode STABILIZE maps throttle to base PWM; ALT_HOLD maps it to climb rate.
  * @param[out] target Candidate targets; unchanged on failure. The unused throttle field is zero.
  * @return false for NULL pointers, invalid channels or an unsupported mode.
- * @note Roll/pitch limits are +/-20 deg, yaw rate +/-90 deg/s. Altitude-mode
+ * @note Roll/pitch limits are +/-20 deg, yaw rate +/-90 deg/s. Right yaw stick
+ *       commands clockwise (negative body Z); left stick commands counterclockwise. Altitude-mode
  *       throttle is zero in 1450..1550 and maps continuously to +/-0.5 m/s outside.
  *       Attitude channels use the remote's existing deadzone. This pure mapping
  *       does not arm, authorize takeoff, lock height, run PID or drive motors.
@@ -60,17 +61,20 @@ bool flight_map_control(const rcprotocol_control_t *control, flight_mode_t mode,
  *       front-right), each at compare 100 for 200 ms.
  *       Motors are separated by 300 ms with all outputs zero. The sequence
  *       finishes after 1700 ms; only one motor is commanded at a time.
- *       After the indication, center all axes (1450..1550) for 200 ms, then
- *       raise throttle to at least 1600 to latch a takeoff request.
+ *       After the indication, center R/P/Y (1450..1550) and hold throttle
+ *       <=1100 for 200 ms. Then raise throttle to >=1200 in STABILIZE to latch
+ *       runtime permission. Future height-mode takeoff uses >=1600 instead.
+ *       R/P/Y must remain centered until the start; throttle never needs to center.
  *       After indication, auto-lock after 15 s without channel movement over
  *       20 steps or a key-state change. The activity baseline updates on movement;
  *       small cumulative movements can therefore count, but sequence changes do not.
- *       Auto-lock only applies while waiting for center/throttle, never after
- *       a takeoff request. Actual flight/landing logic is not implemented yet.
+ *       Auto-lock only applies while waiting for readiness/throttle, never after
+ *       a takeoff request. Airborne/landing state detection is not implemented yet.
  *       This function only updates state; flight_process_control() writes the
  *       motor outputs afterward. With FLIGHT_RATE_TEST_ENABLED=1 the request
- *       enables limited propellers-off rate feedback; throttle <=1550 stops it
- *       and requires center confirmation before another >=1600 trigger.
+ *       enables the cascaded roll/pitch and yaw-rate output; throttle <=1100 stops it
+ *       and requires low-throttle/centered-RPY confirmation before restarting.
+ *       Moving throttle through 1500 does not stop output.
  *       Call every 2 ms; stopping depends
  *       on this task continuing to run. Verify with propellers removed.
  *       This bench policy must be revisited before enabling actual flight.
@@ -81,8 +85,8 @@ bool flight_process_remote(const rcprotocol_control_t *control,
 /**
  * @brief Return the latched throttle takeoff request; does not start takeoff.
  * @note Read from the control task after flight_process_remote(). The request
- *       stays set until disarming or link/IMU loss. In bench mode throttle
- *       <=1550 also clears it. No height/takeoff controller is connected.
+ *       stays set until disarming or link/IMU loss. With motor output enabled, throttle
+ *       <=1100 also clears it. No height/takeoff controller is connected.
  */
 bool flight_takeoff_requested(void);
 
@@ -94,14 +98,32 @@ typedef struct
 } flight_axis_t;
 
 /**
+ * @brief Convert roll/pitch angle errors to rate targets; pass the yaw-rate request through.
+ * @param target Mapped roll/pitch in degrees and yaw rate in degrees/s.
+ * @param measurement_deg Six-axis attitude in the IMU body frame.
+ * @param sample_time_s Controller period in seconds.
+ * @param integral_enabled Allow accumulation only during valid motor operation.
+ * @param[out] target_dps Roll/pitch limited to +/-100 deg/s, yaw from the mapped input.
+ * @note NULL pointers leave output unchanged. Current angle gains are P=3, I=D=0.
+ *       Initial settings require validation. No absolute yaw-heading loop is used.
+ *       Calls must be serialized with flight_rate_control() in the control task.
+ */
+void flight_angle_control(const flight_target_t *target,
+                          const attitude_t *measurement_deg,
+                          float sample_time_s,
+                          bool integral_enabled,
+                          flight_axis_t *target_dps);
+
+/**
  * @brief Calculate three rate PID outputs without applying them to the motors.
  * @param target_dps Target body-axis angular rates in degrees/s.
  * @param measurement_dps Measured body-axis angular rates in degrees/s.
  * @param sample_time_s Controller period in seconds.
  * @param integral_enabled Whether the PID integrals may accumulate.
- * @param[out] output Controller outputs, not motor compare values.
+ * @param[out] output PWM correction counts before motor mixing.
  * @note Call after flight_init(); all pointers must be valid. PID state is private
- *       to this module, so calls must be serialized. Current gains are bench defaults.
+ *       to this module, so calls must be serialized. Current gains are initial settings,
+ *       not a validated flight tune. Inputs must be finite and use one body frame.
  */
 void flight_rate_control(const flight_axis_t *target_dps,
                          const flight_axis_t *measurement_dps,
@@ -160,8 +182,9 @@ typedef struct
     bool rangefinder;
 } flight_sensor_status_t;
 
-/* Latest measurements and estimates. A valid flag means received at least once;
- * timestamps must also be checked before using data for flight decisions.
+/* Latest measurements and estimates. IMU/attitude validity follows the current
+ * coherent frame; other sensors retain their last valid sample. Check timestamps
+ * before using retained data for flight decisions.
  */
 typedef struct
 {
@@ -183,15 +206,15 @@ typedef struct
     bool imu_pending_control; /* Consumed once by the control task. */
 } flight_sensor_data_t;
 
-/* Shared freshness rules and the current mapping preview mode. */
+/* Shared freshness rules and the current control/mapping mode. */
 #define FLIGHT_BARO_TIMEOUT_MS 200U
 #define FLIGHT_LINK_TIMEOUT_MS 300U
 #define FLIGHT_ATTITUDE_TIMEOUT_MS 100U
 #define FLIGHT_BATTERY_TIMEOUT_MS 500U
 #define FLIGHT_HEIGHT_TIMEOUT_MS 100U
 #define FLIGHT_MAPPING_MODE FLIGHT_MODE_STABILIZE
-/* Propellers-off bench only: 1 permits limited zero-rate motor feedback after
- * the arming/center/throttle sequence; 0 restores calculation-only behavior.
+/* 1 permits gated cascaded roll/pitch and yaw-rate motor output after
+ * the arming/low-throttle/readiness sequence; 0 restores calculation-only behavior.
  */
 #define FLIGHT_RATE_TEST_ENABLED 1U
 
@@ -240,10 +263,11 @@ typedef struct
     bool radio_ready;
     bool armed;
     bool takeoff_requested;
+    flight_axis_t rate_target_dps; /* Angle-loop output plus the direct yaw-rate request. */
     flight_axis_t rate_output; /* PID correction in PWM compare counts, not angular rate. */
     bool rate_output_valid;
     uint32_t rate_last_ms; /* IMU/attitude sample time used for the last PID result. */
-    motor_t motor_preview; /* Mixed candidate; only the gated bench path may apply it. */
+    motor_t motor_preview; /* Mixed candidate; only the gated control path may apply it. */
     bool motor_preview_valid; /* Numeric candidate validity, not authorization to run. */
     motor_t motor_output; /* Last M1..M4 compare commands sent to the driver, not measured RPM. */
     flight_target_t target;
@@ -261,13 +285,16 @@ bool flight_is_initialized(void);
 void flight_process_system(void);
 
 /**
- * @brief Run one 2-tick RC/bench-control step, then write all four motor outputs.
- * @note With FLIGHT_RATE_TEST_ENABLED=1, the centered-then-raised throttle request
- *       permits propellers-off zero-rate feedback at base PWM=100, correction
- *       +/-20 per axis and per-motor maximum 160. Throttle <=1550 stops the test.
- *       Missing/invalid IMU data or rate results >=20 ms old disarm the bench;
+ * @brief Run one 2-tick RC/cascaded-control step, then write all four motor outputs.
+ * @note With FLIGHT_RATE_TEST_ENABLED=1, the low-then-raised throttle request
+ *       runs roll/pitch angle -> rate loops and direct yaw-rate control.
+ *       Base PWM = RC throttle - 1000, correction +/-20 per axis, motor 0..1000.
+ *       Throttle <=1100 stops output; mid-stick does not. Integrals are allowed
+ *       only after runtime permission with valid inputs, and reset while stopped.
+ *       Missing/invalid IMU data or rate results >=20 ms old disarm output;
  *       RC timeout also disarms. Between fresh samples, retain the last bounded
- *       result without rerunning PID. This does not implement self-leveling flight.
+ *       result without rerunning PID. Angle and rate use a coherent sensor frame.
+ *       The cascade is connected, but its initial gains have not been flight-tuned.
  *       With the switch at 0, only the arming indication may spin motors.
  *       This is the sole periodic motor writer; locked Flash saves also ensure zero.
  */
@@ -301,7 +328,9 @@ void flight_process_link(void);
  * @note Call once from a running task after CubeMX peripheral initialization.
  *       Results are retained in the application snapshot; completion does not
  *       mean every module succeeded. Other tasks must wait for return. Motors start
- *       at zero. Gyro calibration blocks until still; keep the aircraft level.
+ *       at zero. IMU reset/configuration and gyro acquisition get at most three
+ *       startup attempts. Gyro calibration blocks until still; keep the aircraft level.
+ *       Level acceleration calibration still fails after its existing attempt limit.
  *       Attitude starts from measured acceleration, or level if that read fails.
  *       Height seeding still waits for the measured barometric ground reference.
  *       Blocking calibration may yield to RTOS; do not hold the scheduler lock.
